@@ -1,0 +1,65 @@
+0.31.1 (2013-09-23)
+  naprawiono #3 
+0.31 (2013-06-16)
+  duże litery w rozszerzeniach plików filmowych od teraz są traktowane jak małe 
+  zoptymalizowane konwertowanie stron kodowych 
+  poprawiona auto-detekcja stron kodowych 
+  konfiguracja: zaznaczenie opcji subcode_* jako przestarzałe 
+  konfiguracja: dodanie opcji subcp_conv 
+  dodanie możliwości wyłączania kolorów na terminalu jedną opcją 
+  podzielenie manuala na sekcje 
+  zaktualizowanie manuala 
+  przebudowanie skryptów instalacyjnych 
+  dodanie do źródeł pliku INSTALL 
+  inne 
+0.30.1 (2013-03-27)
+  Naprawiono sprawdzanie zmiennej DISPLAY 
+  Wzbogacono "interpretator argumentów" i dodano "--" 
+  Kilka mniej istotnych zmian 
+0.30.0rc4 (2012-12-01)
+  Naprawiono błąd #1 
+  Opcja napi-bash -m została zastąpiona manualem systemowym 
+
+Migracja hostingu (2012-11-13), poprzedni: http://csk.pl/~kas/?n=Skrypty.Gnapi-bash 
+
+0.30.0rc3 (2012-11-12)
+  Poprawiono: argument "-h" (opcja pomocy) działa tak jak "--help" 
+  Zamieniono: argument "-s" i "-o" wymagają znaku równości, np. "-s=1" (stary format będzie usunięty w przyszłości) 
+  Dodano: dwie opcje subcode_cp1250/subcode_utf8 do automatycznego konwertowania czcionek przy ściąganiu pliku 
+  Dodano: rozszerzenie rmvb do filtru "videoext".. 
+  Drobne poprawki 
+0.30.0rc2 (2012-04-13)
+  Przede wszystkim w 90% skrypt został przepisany od nowa.. (używa elementów wbudowanych w shell, znacząco przyśpieszone operacje..) 
+  Obsługa szybkiej rekurencji 
+  Możliwość pomijania pobierania gdy "napis" już wcześniej został pobrany 
+  Równoległe generowanie sum i pobieranie napisów (znacząco przyśpieszone pobieranie) 
+  Bardziej zaawansowane przetwarzanie argumentów polecenia 
+  Obsługa raportów (podsumowań) 
+  Plik konfiguracyjny 
+  Tagi w opisach (pobrane, błąd, raport) 
+  Od teraz domyślnie napi-bash wyświetla notyfikację dla wszystkich plików jednorazowo, a nie dla każdego pliku z osobna. Mogło być uciążliwe dla użytkowników nowego Gnome. Można przywrócić w pliku konfiguracyjnym.. 
+  i inne jak np: 
+  zmiana rozszerzenia napisów na sub poprzez plik konfiguracyjny (dla odtwarzacz totem).. 
+  możliwość zmienienia programu pobierającego napisy DLAGENT (np. z curl na wget) 
+  itp.. 
+0.20.1 (2009-11-11)
+  Poprawiono: Output składa się z kilku zmiennych tekstowych, zamiast wyświetlać zawartość zmiennej jak np: "Uwaga: ", "Błąd: ", wyświetlany był numer, po czym dalsza część komunikatu już w sposób czytelny 
+0.20 (2009-08-14)
+  Dodano: opcję (-g) - uruchomiony jako "skrypt nautilusa" nie potrzebuje tej opcji (specjalna zmienna podmieniana przezeń). 
+  Dodano: opcję (-C) - changelog, ostatnie 5 wersji 
+  Dodano: Możliwe jest pobieranie napisów do kilku filmów jednocześnie 
+  Dodano: Możliwe jest rozszerzanie programu o inne GUI, np. dla KDE, mimo to na razie jest tylko GTK (notify-send). 
+  Zmieniono: Nazwę programu z Gnapi-bash do Napi-bash. ^^ 
+  Zmieniono: Od teraz zenity jest jeszcze bardziej opcjonalny 
+  Zmieniono: Komunikaty pokazują nazwy plików 
+0.18 (2009-05-04)
+  Dodano: cli (-c) - opcja pozwala używać gnapi poza Xorgiem 
+  Dodano: zabezpieczenie przez nadpisaniem pliku z napisami 
+  Zmieniono: notyfikacja teraz jest realizowana przez notify-send 
+  Zmieniono: python od teraz jest zbędny przy tworzeniu napi-hashu 
+  Uwaga: w razie chęci kręcenia przy opcjach dd w funkcji get_napi_url, pamiętaj by łączna suma bajtów wynosiła 10485760 
+0.17.99.2 (20070121)
+  Naprawiony błąd: brakujące cudzysłowie - błędna interpretacja spacji w ścieżce do pliku. 
+  Poprawki kosmetyczne: komunikaty są teraz wyraźniejsze i bardziej zrozumiałe, itp. 
+0.17.99.1 (2007-01-19)
+  Pierwsza wersja

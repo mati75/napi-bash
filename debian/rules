@@ -8,5 +8,8 @@ override_dh_install:
 	dh_install
 	rm -rf debian/napi-bash/usr/share/man/{,pl
 
+override_dh_installchangelogs:
+	dh_installchangelogs debian/ChangeLog.pl.upstream
+
 override_dh_builddeb:
 	dh_builddeb -- -Zxz -z9
