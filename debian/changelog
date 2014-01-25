@@ -1,5 +1,5 @@
 napi-bash (0.31.1-1) unstable; urgency=low
 
-  * Initial release.
+  * Initial release. (Closes: #729473)
 
- -- Mateusz Łukasik <mati75@linuxmint.pl>  Tue, 01 Oct 2013 21:19:06 +0200
+ -- Mateusz Łukasik <mati75@linuxmint.pl>  Sat, 25 Jan 2014 09:45:59 +0100
