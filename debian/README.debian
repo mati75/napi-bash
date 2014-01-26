@@ -1,1 +1,1 @@
-While this package is technically marked "any", it will only function correctly in linux or BSD/kFreeBSD systems (This namely excludes Hurd)
+While this package is technically marked "all", it will only function correctly in linux or BSD/kFreeBSD systems (This namely excludes Hurd)
