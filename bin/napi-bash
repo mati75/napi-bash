@@ -1,31 +1,62 @@
 #!/bin/bash
-declare -r VERSION="0.31.1"
-declare -r config="${XDG_CONFIG_HOME:-"${HOME}/.config"}/napi-bash/config"
+NB_VERSION="0.50"
+NB_CONFIGDIR="${NB_CONFIGDIR:-"${XDG_CONFIG_HOME:-"${HOME}/.config"}/napi-bash"}"
+NB_CACHEDIR="${NB_CACHEDIR:-"${XDG_CACHE_HOME:-"${HOME}/.cache"}/napi-bash/"}"
+NB_CONFIG="${NB_CONFIG:-"$NB_CONFIGDIR/config"}"
+
+declare -a files hashes
+declare -A subfmt_ext
+
+subfmt_ext[fab]=txt
+subfmt_ext[microdvd]=sub
+subfmt_ext[mpl2]=txt
+subfmt_ext[subviewer]=sub
+subfmt_ext[subrip]=srt
+subfmt_ext[tmplayer]=txt
+
+auth_login=nie
+
+subcp_conv=""
+subfmt_conv=""
+subeol_conv=""
 
 subext="txt"
-suboverwrite=0
-subskipifexist=0
-subcode_utf8=0   # TODO usuń w nowszej niż 0.31
-subcode_cp1250=0 # TODO usuń w nowszej niż 0.31
-use_colors=1
-videoext='^(3gp|avi|asf|divx|m4v|mkv|mov|mp4|mpe|mpeg|mpg|ogg|ogv|rmvb|wmv|qt)$'
+subext_autodetect=tak
+subext_prefix=""
+suboverwrite=nie
+subskipifexist=nie
+subretry_restore=nie
+subretry_store=nie
+colors=tak
+videoext_match=dir
+videoext=(.{3gp,avi,asf,divx,m{4,k,o}v,mp{4,e,eg,g},ogg,ogv,rmvb,wmv,qt})
 DLAGENT="curl -fLsS --retry 3 --retry-delay 3 -o %o %u"
 msg_raport="Łącznie pobranych napisów: %b%d/%a%B"
 msg_status[0]="%2%bPobrano%R dla %i%f"
 msg_status[1]="%1%bBrak napisów%R dla %i%f"
 msg_status[2]="%1Brak uprawnień do zapisu w folderze z plikiem: %f"
 msg_status[3]="%1Niewystarczająca ilość wolnego miejsca na urządzeniu z plikiem: %f"
+msg_status[100]="%1Nie powiodła się detekcja formatu napisów dla: %f"
+msg_status[101]="%1Nie powiodło się konwertowanie formatu napisów dla: %f"
+msg_status[102]="%1Nie powiodło się konwertowanie strony kodowej napisów dla: %f"
+msg_status[200]="%1Zdalny serwer zwrócił: Przerwa techniczna..."
 msg_status[254]="%1DLAGENT nie zawiera tagu %o dla pliku wyjściowego.."
 msg_status[255]="%1Pobieranie pliku z napisami nie powiodło się, problemy z połączeniem?"
 msg_gui_disabled_array=(0 1)
 msg_cli_disabled_array=()
-raport_gui_enabled=1
-raport_cli_enabled=1
+raport_gui_enabled=tak
+raport_cli_enabled=tak
+gui_int_warn=tak
 
 gui_msg_fmt="gui_xml"
 cli_msg_fmt="cli_esc"
 gui_raport_fmt="gui_xml"
 cli_raport_fmt="cli_esc"
+
+# obsługiwane wersje to: "0.3", "0.4"
+fps_detect_mpv_version="0.4" #CHANGEME#
+
+fps_detect_tools=(ffprobe mediainfo mplayer mpv)
 
 gui_msg() {
   # 1 = type
@@ -43,71 +74,178 @@ custom_raport() {
   return 1
 }
 
+enabled() {
+  case "${1,,}" in
+    0|-|f*|n*|wy*|of*|"") false
+  esac
+}
 
 #-------------------------------------------------------------------------------
-#  Ładowanie konfiguracji..
+# Ładowanie konfiguracji (uwaga: do tego miejsca można nadpisać configiem)
 #-------------------------------------------------------------------------------
+load_config() {
+  local opt config
 
-[ -f "$config" -a -r "$config" ] && . "$config"
+  until [ -z "$1" ]; do
+    opt="$1"; shift
+    case "${opt}" in
+      --config=*)
+        if [ -f "${opt#*=}" -a -r "${opt#*=}"]; then
+          config="${opt#*=}"
+        elif [ -f "$NB_CONFIGDIR/${opt#*=}" -a -r "$NB_CONFIGDIR/${opt#*=}" ]; then
+          config="$NB_CONFIGDIR/${opt#*=}"
+        fi
+        break
+      ;;
+      --)
+        break
+    esac
+  done
+
+  if [ -z "$config" ]; then
+    config="$NB_CONFIGDIR/config"
+    test -f "$config" -a -r "$config" || return 1
+  fi
+
+  source "$config"
+}
+
+alias exit=return
+load_config "$@"
+unalias exit
 
 #-------------------------------------------------------------------------------
 #  Podstawowe funkcje..
 #-------------------------------------------------------------------------------
 msg() {
-  __print "0;32;1" "==>" "0;1" "$1"
+  local print_msg_fmt_ret
+  print_msg_fmt "0;32;1" "==>" "0;1" "$1"\
+    && printfo STDOUT "$print_msg_fmt_ret"
+
 }
 msg2() {
-  __print "0;34" "  -->" "0" "$1"
+  local print_msg_fmt_ret
+  print_msg_fmt "0;34" "  -->" "0" "$1"\
+    && printfo STDOUT "$print_msg_fmt_ret"
 }
 
 info() {
-  __print "0;35;1" "Info:" "0" "$1"
+  local print_msg_fmt_ret
+  print_msg_fmt "0;35;1" "Info:" "0" "$1" \
+    && printfo STDOUT "$print_msg_fmt_ret"
+
   return 1
 }
 warn() {
-  __print "0;33;1" "Uwaga:" "0" "$1" >&2
+  local print_msg_fmt_ret
+  print_msg_fmt "0;33;1" "Uwaga:" "0" "$1" \
+    && printfo STDERR "$print_msg_fmt_ret"
+  test -n "$DISPLAY" && enabled "$gui_int_warn" && gui_msg "warn" "$1" &> /dev/null &
   return 1
 }
 error() {
-  __print "0;31;1" "Błąd:" "0" "$1" >&2
+  local print_msg_fmt_ret
+  print_msg_fmt "0;31;1" "Błąd:" "0" "$1" \
+    && printfo STDERR "$print_msg_fmt_ret"
+  test -n "$DISPLAY" && gui_msg "error" "$1" &> /dev/null &
   return 1
 }
-__print() {
-  if [ "${use_colors:-1}" = "1" ]; then
-    printf "\e[%sm%s\e[%sm %s...\e[0m\n" "$@"
+print_msg_fmt() {
+  if enabled "$colors"; then
+    printf -v print_msg_fmt_ret '\e[%sm%s\e[%sm %s...\e[0m\n' "$@"
   else
-    printf "%s %s...\n" "$2" "$4"
+    printf -v print_msg_fmt_ret '%s %s...\n' "$2" "$4"
   fi
 }
 
-enabled() {
-  if [ "${1:-0}" = "0" ]; then
-    return 1
-  else
-    return 0
+printfo() {
+  test "$#" = "0" && return
+  local t=1
+
+  if [ "$#" -ge "2" ]; then
+    case "$1" in
+      STDOUT) true;;
+      STDERR) enabled "$DEBUG" || t=2;;
+      *) false
+    esac && shift
   fi
+
+  printf "$@" >&$t
 }
 
+is_function() {
+  declare -F "$1" &> /dev/null
+}
+
+#-------------------------------------------------------------------------------
+#  Obsługa argumentów, wyszkiwanie i badanie plików..
+#-------------------------------------------------------------------------------
 usage() {
-  cat << EOF
-Napi-bash wersja $VERSION | 3ED <krzysztof1987@gmail.com>
+  printf '%s wersja %s | 3ED <krzysztof1987@gmail.com>\n\n' \
+    "napi-bash" "$NB_VERSION"
 
-Użycie:
+  printf 'Użycie:
   napi-bash [opcje] <plik/folder> [kolejne pliki/foldery]
   napi-bash <-h|--help>
 
 Opcje:
-  -o=<0/1>, --suboverwrite=<0/1>, --(no-)suboverwrite
-      Nadpisuj pliki: 0=nie; 1=tak (ustawione: $suboverwrite)
+  -o=<bool>, --suboverwrite=<bool>, --(no-)suboverwrite
+      Nadpisuj pliki (ustawione: %s)
 
-  -s=<0/1>, --skipifexist=<0/1>, --(no-)skipifexist
-      Pomijaj pobrane: 0=nie; 1=tak (ustawione: $subskipifexist)
+  -s=<bool>, --skipifexist=<bool>, --(no-)skipifexist
+      Pomijaj pobrane (ustawione: %s)
 
-  -c=<0/1>|--colors=<0/1>|--(no-)colors
-      Używaj kolorów: 0=nie; 1=tak (ustawione: $use_colors)
+  -c=<bool>, --colors=<bool>, --(no-)colors
+      Używaj kolorów (ustawione: %s)
 
-  -x=<str>, --subext=<str>
-      Rozszerzenie pliku (ustawione: $subext)
+  -x=<tekst>, --subext=<tekst>
+      Rozszerzenie pliku (ustawione: "%s").
+
+  -X=<bool>, --subext-autodetect=<bool>, --(no-)subext-autodetect
+      Przeprowadzić autodetekcji (ustawione: %s).
+
+  -P=<tekst>, --subext-prefix=<tekst>
+      Dodatkowy przedrostek przed rozszerzeniem pliku. Puste by
+      wyłączyć. (Ustawione: "%s")
+
+  -F=<tekst>, --subfmt-conv=<tekst>
+      Format napisów. Puste by wyłączyć. (ustawione: "%s")
+
+  -C=<tekst>, --subcp-conv=<tekst>
+      Konwerowanie strony kodowej napisów. Puste by wyłączyć.
+      (ustawione: "%s")
+
+  -E=<tekst>, --subeol-conv=<tekst>
+      Konwertowanie typu oznaczenia końca linii. Puste by
+      wyłączyć. (ustawione: "%s")
+
+  -d=<od-do>, --depth=<od-do>
+      Głębia przeszukiwania rekursywnego..
+
+  -g=<liczba>, --ge=<liczba>
+      Tylko pliki większe bądź równe podanej ilości MiB.
+
+  -l=<liczba>, --le=<liczba>
+      Tylko pliki mniejsze bądź równe podanej ilości MiB.
+
+  -n=<tekst>, --nick=<tekst>
+      Twój login do napiprojektu. Puste dla konta anonimowego.
+      (ustawione: "%s")
+
+  -p=<tekst>, --pass=<tesk>
+      Twoje hasło do napiprojektu. Puste dla konta anonimowego.
+      (ustawione: "%s")
+
+  -L=<bool>, --login=<bool>
+      Loguj się podanym wcześniej nickiem i hasłem.
+      (ustawione: %s)
+
+  --debug=<plik>
+      Tryb debugowy
+
+  --config=<plik>
+      Nazwa konfiguracji lub pełna ścieżka. (Ustawione:
+      %s)
 
   -h, --help, --usage
       Wyświetl pomoc
@@ -118,31 +256,88 @@ Napi-bash opublikowano na licencji GPL3:
   This program comes with  ABSOLUTELY NO WARRANTY;
   This program may be  freely redistributed  under
   the terms of the GNU GPL 3. For more information
-  read:   http://www.gnu.org/licenses/gpl-3.0.html
-EOF
+  read:   http://www.gnu.org/licenses/gpl-3.0.html\n' \
+    "$suboverwrite" "$subskipifexist" "$colors" \
+    "$subext" "$subext_autodetect" "$subext_prefix" \
+    "$subfmt_conv" "$subcp_conv" "$subeol_conv" \
+    "$auth_nick" "${auth_pass:+"***"}" "$auth_login" \
+    "${config:-"$NB_CONFIGDIR/config"}"
 
-	exit 1
+#  -r=<bool>, --subretry-restore=<bool> [szkic/koncepcja]
+#      Wznawia pobierania wcześniej zakończone niepowodzeniem,
+#      bez ponownego generowania sum kontrolnych. (ustawione: $subretry_restore)
+
+	return 1
 }
 
-#-------------------------------------------------------------------------------
-#  Pobieranie argumentów, wyszkiwanie i badanie plików..
-#-------------------------------------------------------------------------------
-get_ARGV() {
-  local i opt subopt
+ARGV() {
   local -a paths
+
+  ARGV__getopts "$@" || return 1
+
+  # niezbędny:
+  setup_bin_7z || return 1
+
+  # opjonalne:
+  setup_bin_iconv
+  setup_bin_subotage
+
+  setup_var_filesize
+
+  # TODO: zostawić tylko listę w wersji x.51 lub nowszej
+  local v videoext_array=0
+
+  if v="$(declare -p videoext 2>/dev/null)"; then
+    case "$v" in
+      "declare -a videoext="*|"typeset -a videoext="*) videoext_array=1;;
+    esac
+  fi
+
+  test "$videoext_array" = "1" \
+    || warn "Zaktualizuj opcję videoext do nowszej wersji..."
+
+  msg "Generowanie listy plików"
+
+  if generate_files "${paths[@]}"; then
+    msg "Wyszukiwanie i pobieranie napisów"
+  else
+    info "Brak plików lub odrzucone przez filtr"
+    return 1
+  fi
+}
+
+ARGV__getopts() {
+  local opt bool_ret
 
   until [ -z "$1" ]; do
     opt="$1"; shift
     case "${opt}" in
-      -h|--help|--usage) usage ;;
-      -o=1|--suboverwrite=1|--suboverwrite)    suboverwrite=1 ;;
-      -o=0|--suboverwrite=0|--no-suboverwrite) suboverwrite=0 ;;
-      -s=1|--skipifexist=1|--skipifexist)    subskipifexist=1 ;;
-      -s=0|--skipifexist=0|--no-skipifexist) subskipifexist=0 ;;
-      -c=1|--colors=1|--colors)    use_colors=1;;
-      -c=0|--colors=0|--no-colors) use_colors=0;;
+      -h|--help|--usage) usage; return $? ;;
+      -o=*|--suboverwrite=*|--suboverwrite|--no-suboverwrite)
+        ARGV__bool "$opt"; suboverwrite="$bool_ret";;
+      -s=*|--skipifexist=*|--skipifexist|--no-skipifexist)
+        ARGV__bool "$opt"; subskipifexist="$bool_ret";;
+      -c=*|--colors=*|--colors|--no-colors)
+        ARGV__bool "$opt"; colors="$bool_ret";;
+      -X=*|--subext-autodetect=*|--subext-autodetect|--no-subext-autodetect)
+        ARGV__bool "$opt"; subext_autodetect="$bool_ret";;
+#      -r=*|--subretry-restore=*|--subretry-restore|--no-subretry-restore)
+#        ARGV__bool "$opt"; subretry_restore="$bool_ret";;
+      -F=*|--subfmt-conv=*) subfmt_conv="${opt#*=}" ;;
+      -E=*|--subeol-conv=*) subeol_conv="${opt#*=}";;
+      -C=*|--subcp-conv=*) subcp_conv="${opt#*=}" ;;
       -x=*|--subext=*) subext="${opt#*=}" ;;
+      -P=*|--subext-prefix=*) subext_prefix="${opt#*=}" ;;
+      -d=*|--depth=*) ARGV__parse_depth "${opt#*=}";;
+      -g=*|--ge=*) filesize_ge="${opt#*=}";;
+      -l=*|--le=*) filesize_le="${opt#*=}";;
+      -n=*|--nick=*) auth_nick="${opt#*=}";;
+      -p=*|--pass=*) auth_pass="${opt#*=}";;
+      -L=*|--login=*) auth_login="${opt#*=}";;
+      --version) echo "$NB_VERSION"; return 1;;
+      --debug=*|--config=*) true;;
       --) break ;;
+      -*) ARGV__bad_arg l "$opt" || return 1;;
       *) paths+=("$opt")
     esac
   done
@@ -151,62 +346,177 @@ get_ARGV() {
     shift
   done
 
-  # OSTRZERZENIE O NIEAKTUALNOŚCI OPCJI - OBSŁUGA ZNIKNIE W NOWSZEJ WERSJI! TODO Usuń w nowszej niż 0.31
-  if [ -z "$subcp_conv" ] && [ "${subcode_utf8:-0}" = "1" -o "${subcode_cp1250:-0}" = "1" ]; then
-    warn "opcje 'subcode_*' są przestarzałe, zastąp opcją 'subcp_conv'"
-    test "${subcode_utf8:-0}" = "1" && subcp_conv=u
-    test "${subcode_cp1250:-0}" = "1" && subcp_conv=w
-  fi
-  test -z "$subcp_conv" || checkbin_iconv
-  checkbin_7z || exit 1
+  #RETURNVAR: @paths
+}
+ARGV__bad_arg() {
+  case "$1" in
+    l) error "Niepoprawna opcja: '$2'";;
+    r) error "Nieprawidłowy argument opcji: '$2'";;
+    *) false
+  esac
+}
 
-  msg "Generowanie listy plików"
+ARGV__bool() {
+  local left="${1%%=*}" right="${1#*=}"
+  bool_ret=nie
+
+  if [ "$left" = "$right" ]; then
+    ! [[ "$left" =~ '^--no-' ]] && bool_ret=tak
+  else
+    enabled "$right" && bool_ret=tak 
+  fi
+  #RETURNVAR: $bool_ret
+}
+
+ARGV__parse_depth() {
+  test -z "${1//[0-9-]/}" || return 0
+
+  unset NB_FIND_DEPTH
+
+  local left="${1%%-*}"
+  local right="${1##*-}"
+
+  test -n "$left" && NB_FIND_DEPTH+=("-mindepth" "$left")
+  test -n "$right" && NB_FIND_DEPTH+=("-maxdepth" "$right")
+
+  return 0
+}
+
+test_filesize() {
+  local file="$1"
+
+  # bash operuje na type int dla liczb (zaokrągla zawsze w dół)
+  local -i filesize=0
+  read filesize < <(stat -c "%s" -- "$file" 2> /dev/null)
+
+  test "$filesize" != "0" \
+    || return 1
+
+  filesize="$[filesize / 1048576]"
+
+  # większy bądź równy
+  test "$filesize" -ge "$filesize_ge" \
+    || return 1
+
+  # mniejszy bądź równy
+  test -z "$filesize_le" \
+    || test "$filesize" -le "$filesize_le" \
+    || return 1
+}
+
+test_videoext() {
+  local file="$1"
+
+  # TODO: zostawić tylko listę w wersji x.51 lub nowszej
+  if [ "$videoext_array" = "0" ]; then
+    local ext="${file##*.}"
+
+    [[ "${ext,,}" =~ $videoext ]] && return 0
+  else
+    local i n
+
+    for i in "${videoext[@]}"; do
+      n="${file:${#file}-${#i}}"
+      test "$n" = "$i" && return 0
+    done
+  fi
+
+  return 1
+}
+
+generate_files() {
+  local i realpath
 
   # Pliki/katalogi..
-  for i in "${paths[@]}"; do
-    if [ -d "$i" ]; then
-      get_ARGV__get_filelist_from_dir_recursively "$i"
+  for i in "${@}"; do
+    test -n "$i" || continue
+    read realpath < <(realpath -- "$i")
+
+    if [ -d "$realpath" ]; then
+      generate_files__dir_recursively "$realpath"
     else
-      get_ARGV__add_video_to_filelist "$i"
+      generate_files__file "$realpath"
     fi
   done
 
-  if [ "${#files[@]}" -le "0" ]; then
-   info "Brak plików lub odrzucone przez filtr"
-   exit
- else
-   msg "Wyszukiwanie napisów"
- fi
+  # Dodawanie zawartości katalogu subretry o posiada zawartość
+  subretry_restore
+
+  test "${#files[@]}" != "0"
+
+  # RETURNVAR: @files
 }
 
-get_ARGV__bad_arg() {
-  error "Brakujący lub niepoprawny argument dla '$1'"
-  exit 1
-}
-
-get_ARGV__get_filelist_from_dir_recursively() {
+generate_files__dir_recursively() {
   local i
 
   while IFS= read -r -u4 -d $'\0' i; do
-    get_ARGV__add_video_to_filelist "$i"
-  done 4< <(find "$1" -type f -print0)
+    NB_generate_files_FOR=dir \
+      generate_files__file "$i"
+  done 4< <(find "$1" "${NB_FIND_DEPTH[@]}" -type f -print0)
 }
 
-get_ARGV__add_video_to_filelist() {
-  test -f "$1" -a -r "$1" \
-    && local ext="${1##*.}" \
-    && [[ "${ext,,}" =~ $videoext ]] \
-    && local size="`stat -c %s "$1"`" \
-    && test "$size" -ge "10485760" \
-    || return 1
+generate_files__file() {
+  test -f "$1" -a -r "$1" || return 1
 
-  enabled "$subskipifexist" \
-    && [ -f "${1%.*}.$subext" ] \
-    && return 0
+  local NB_generate_files_FOR="${NB_generate_files_FOR:-file}"
 
-    files+=("$1")
+  case "${videoext_match,,}" in
+    a*|${NB_generate_files_FOR:0:1}*) test_videoext "$1" || return 0;;
+  esac
+
+  test_filesize "$1" || return 1
+
+  if enabled "$subskipifexist"; then
+    local pref="${subext_prefix:+"."}$subext_prefix"
+    if enabled "$subext_autodetect"; then
+      # TODO "ułądnić"; Pomjać z opcją overwrite?
+      for i in "${!subfmt_ext[@]}"; do
+        test -f "${1%.*}$pref.${subfmt_ext[$i]}" && return 1
+      done
+    fi
+    test -f "${1%.*}$pref.$subext" && return 1
+  fi
+
+  files+=("$1")
 }
 
+#-------------------------------------------------------------------------------
+#  Specjalne funkcje wczesnego ładowania
+#-------------------------------------------------------------------------------
+early() {
+  test -t 1 || colors=0
+
+  early__debug "$@"
+}
+
+early__debug() {
+  local opt
+
+  until [ -z "$1" ]; do
+    opt="$1"; shift
+    case "${opt}" in
+      --debug=*)
+        DEBUG=1
+        local debug_log="${opt#*=}"
+        if [ -z "$debug_log" ] || [ -d "$debug_log" ]; then
+          debug_log+="${debug_log:+"/"}napi-bash.nb_debug"
+        else
+          if [ -f "$debug_log" ]; then
+            test "${debug_log##*.}" = "nb_debug" || debug_log+=".nb_debug"
+          fi
+        fi
+        exec 2>&-;
+        exec 2<>"$debug_log";
+        set -x;
+        PS4='+ [${LINENO}] ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+        break
+      ;;
+      --)
+        break
+    esac
+  done
+}
 
 #-------------------------------------------------------------------------------
 #  Obsłóga błędów i raporty
@@ -246,82 +556,86 @@ fill_fields() {
   local msg="$3"
   shift 3
 
+  local -a NB_FIELDS_SUB
+  fill_fields_ret=
+
   local -i c=0
 
   for ((c=0; $c < ${#msg}; c++)); do
     ch="${msg:c:1}"
     if [ "$ch" = "%" ]; then
       let c++
-      _ini_fields_$ini "$fmt" "${msg:c:1}" "$@"
+      fill_fields__ini_$ini "$fmt" "${msg:c:1}" "$@"
     else
-      echo -n "$ch"
+      fill_fields_ret+="$ch"
     fi
   done
 
-  _fmt_fields_$fmt "R"
-  echo
+  fill_fields__fmt_$fmt "R"
+
+  #RETURNVAR: $fill_fields_ret
 }
 
 # ini fields (put the information)
-_ini_fields_msg() {
+fill_fields__ini_msg() {
   case "$2" in
-    f) echo -n "${files[$3]##*/}";;
-    d) echo -n "$3";;
-    e) echo -n "$4";;
-    %) echo -n "%";;
-    *) _fmt_fields_$1 "$2"
+    f) fill_fields_ret+="${files[$3]##*/}";;
+    d) fill_fields_ret+="$3";;
+    e) fill_fields_ret+="$4";;
+    %) fill_fields_ret+="%";;
+    *) fill_fields__fmt_$1 "$2"
   esac
 }
-_ini_fields_raport() {
+fill_fields__ini_raport() {
   local -i d=0 n=0 a=0
 
   for ((a=0; $a < "${#files_stat[@]}"; a++)); do
-    test "${files_stat[$a]}" = "0" && let d++ || let n++
+    test "${files_stat[$a]}" = "0" && d+=1 || n+=1
   done
 
   case "$2" in
-    d) echo -n "$d";;
-    n) echo -n "$n";;
-    a) echo -n "$a";;
-    %) echo -n "%";;
-    *) _fmt_fields_$1 "$2"
+    d) fill_fields_ret+="$d";;
+    n) fill_fields_ret+="$n";;
+    a) fill_fields_ret+="$a";;
+    %) fill_fields_ret+="%";;
+    *) fill_fields__fmt_$1 "$2"
   esac
 }
 
 # format fields (formating output)
-_fmt_fields_cli_esc() {
-  test "${use_colors:-1}" = "1" || return
+fill_fields__fmt_cli_esc() {
+  enabled "$colors" || return
 
   case "$1" in
-    [0-7]) __CLIFMT[0]=";3$1";;
-    b) __CLIFMT[1]=";1";;
-    i) __CLIFMT[2]=";3";;
-    u) __CLIFMT[3]=";4";;
-    [8-9]) unset __CLIFMT[0];;
-    B) unset __CLIFMT[1];;
-    I) unset __CLIFMT[2];;
-    U) unset __CLIFMT[3];;
-    R) unset __CLIFMT;;
+    [0-7]) NB_FIELDS_SUB[0]=";3$1";;
+    b) NB_FIELDS_SUB[1]=";1";;
+    i) NB_FIELDS_SUB[2]=";3";;
+    u) NB_FIELDS_SUB[3]=";4";;
+    [8-9]) unset NB_FIELDS_SUB[0];;
+    B) unset NB_FIELDS_SUB[1];;
+    I) unset NB_FIELDS_SUB[2];;
+    U) unset NB_FIELDS_SUB[3];;
+    R) local i; for i in {0..3}; do unset NB_FIELDS_SUB[$i]; done;;
     *) return;;
   esac
 
-  echo -en "\e[0${__CLIFMT[1]}${__CLIFMT[2]}${__CLIFMT[3]}${__CLIFMT[0]}m"
+  fill_fields_ret+="\e[0${NB_FIELDS_SUB[1]}${NB_FIELDS_SUB[2]}${NB_FIELDS_SUB[3]}${NB_FIELDS_SUB[0]}m"
 }
-_fmt_fields_gui_xml() {
+fill_fields__fmt_gui_xml() {
   local c
   case "$1" in
     b|i|u)
       local canset=1
-      for ((c=0; $c < ${#__GUIFMT}; c++)); do
-        test "${__GUIFMT:$c:1}" = "$1" && canset=0
+      for ((c=0; $c < ${#NB_FIELDS_SUB[0]}; c++)); do
+        test "${NB_FIELDS_SUB[0]:$c:1}" = "$1" && canset=0
       done
       test "$canset" = "1" || return
-      echo -n "<$1>" && __GUIFMT+="$1"
+      fill_fields_ret+="<$1>" && NB_FIELDS_SUB[0]+="$1"
     ;;
     B|I|U)
       local stupidxml_left="" stupidxml_right="" stupidxml_tag="" canunset=0 new_GUIFMT=""
-      for ((c=0; $c < ${#__GUIFMT}; c++)); do
-        stupidxml_tag="${__GUIFMT:$c:1}"
+      for ((c=0; $c < ${#NB_FIELDS_SUB[0]}; c++)); do
+        stupidxml_tag="${NB_FIELDS_SUB[0]:$c:1}"
         if [ "$stupidxml_tag" = "${1,}" ]; then
           canunset=1
         else
@@ -331,19 +645,19 @@ _fmt_fields_gui_xml() {
       done
       test "$canunset" = "1" || return
 
-      for ((c=$[${#__GUIFMT}-1]; $c >= 0; c--)); do
-        stupidxml_left+="</${__GUIFMT:$c:1}>"
+      for ((c=$[${#NB_FIELDS_SUB[0]}-1]; $c >= 0; c--)); do
+        stupidxml_left+="</${NB_FIELDS_SUB[0]:$c:1}>"
       done
 
-      __GUIFMT="$new_GUIFMT"
+      NB_FIELDS_SUB[0]="$new_GUIFMT"
 
-      echo -n "$stupidxml_left$stupidxml_right"
+      fill_fields_ret+="$stupidxml_left$stupidxml_right"
     ;;
     R)
-      for ((c=$[${#__GUIFMT}-1]; $c >= 0; c--)); do
-        echo -n "</${__GUIFMT:$c:1}>"
+      for ((c=$[${#NB_FIELDS_SUB[0]}-1]; $c >= 0; c--)); do
+        fill_fields_ret+="</${NB_FIELDS_SUB[0]:$c:1}>"
       done
-      unset __GUIFMT
+      unset NB_FIELDS_SUB[0]
     ;;
     *) return;;
   esac
@@ -352,12 +666,13 @@ _fmt_fields_gui_xml() {
 ##### main message functions #####
 napi_msg() {
   [ -z "$1" -o -z "$2" ] && return 1
-  [ "$USERBREAK" = "1" ] && return 0
+  [ "$NB_USERBREAK" = "1" ] && return 0
 
   # $1 = id pliku
   # $2 = id błędu
 
   local msg
+  local fill_fields_ret
 
   files_stat[$1]=$2
 
@@ -368,25 +683,32 @@ napi_msg() {
   napi_msg_cli "$msg" "$@"
   napi_msg_gui "$msg" "$@"
 
-  test "$2" -lt "200" || exit 1
+  if [ "$2" -ge "100" ]; then
+    test "$2" -ge "200" && exit 1
+    files_warn[$1]+="${files_warn[$1]:+","}$2"
+  fi
+
   return $2
 }
 napi_msg_gui() {
   napi_msg__enabled__gui "$3" || return 0
-  fill_fields "msg" "$gui_msg_fmt" "$@" | gui_msg "$3" "`cat`" &
+  fill_fields "msg" "$gui_msg_fmt" "$@" \
+    && gui_msg "$3" "$fill_fields_ret" &
 }
 napi_msg_cli() {
   napi_msg__enabled__cli "$3" || return 0
   if [ "$3" = "0" ]; then
-    fill_fields "msg" "$cli_msg_fmt" "$@"
+    fill_fields "msg" "$cli_msg_fmt" "$@" \
+      && printfo STDOUT "$fill_fields_ret\n"
   else
-    fill_fields "msg" "$cli_msg_fmt" "$@" >&2
+    fill_fields "msg" "$cli_msg_fmt" "$@" \
+      && printfo STDERR "$fill_fields_ret\n"
   fi
 }
 napi_raport() {
   local msg
 
-  if ! msg="`custom_raport`"; then
+  if ! msg="$(custom_raport)"; then
     msg="${msg_raport:-"Łącznie pobrano %i/%a napisów..."}"
   fi
 
@@ -395,185 +717,654 @@ napi_raport() {
 }
 napi_raport_gui() {
   napi_msg__enabled__gui "raport" || return 0
-  fill_fields "raport" "$gui_raport_fmt" "$@" | gui_msg "raport" "`cat`" &
+  fill_fields "raport" "$gui_raport_fmt" "$@" \
+    && gui_msg "raport" "$fill_fields_ret" &
 }
 napi_raport_cli() {
   napi_msg__enabled__cli "raport" || return 0
   msg "Raport"
-  fill_fields "raport" "$cli_raport_fmt" "$@"
+  fill_fields "raport" "$cli_raport_fmt" "$@" \
+    && printfo STDOUT "$fill_fields_ret\n"
 }
 
 #-------------------------------------------------------------------------------
 #  Generowanie sum kontrolnych
 #-------------------------------------------------------------------------------
-__gen_md5_sums() {
-    test -n "$1" || return 1
-    local md5
+get_hash__md5sum() {
+  test -n "$1" -a -f "$1" -a -r "$1" || return 1
 
-  	md5="$(dd bs=10485760 count=1 if="${files[$1]}" 2> /dev/null|md5sum)" || return 1
-    md5=${md5%% *}
+  read md5sum < <(md5sum --binary < <(dd bs=10485760 count=1 if="$1" 2> /dev/null))
+  md5sum="${md5sum:0:32}"
 
-    test ${md5//[^0-9a-f]/} = $md5 || return 1
-    test ${#md5} = 32 || return 1
+  test "${md5sum//[^[:xdigit:]]/}" = "$md5sum" \
+    && test "${#md5sum}" = "32"
 
-    echo $1 $md5 >&3
+  # RETURN: $md5sum
 }
 
-__gen_napi_sums() {
+get_hash__napisum() {
+  test -n "$1" || return 1
+
   # Komuś chyba się nudziło...
-	if [ -z "$1" ]; then return 1; fi
+  local md5sum idx mul add n a p i s y
 
-	local md5 napi idx mul add n a p i s y
+  md5sum="$1"
+  napisum=
 
-	md5="$1"
+  idx=("14" "3"  "6"  "8"  "2")
+  mul=("2"  "2"  "5"  "4"  "3")
+  add=("0"  "13" "16" "11" "5")
 
-	idx=("14" "3"  "6"  "8"  "2")
-	mul=("2"  "2"  "5"  "4"  "3")
-	add=("0"  "13" "16" "11" "5")
+  for p in ${!idx[*]}; do
+    n="${add[p]}"
+    a="${mul[p]}"
+    p="${idx[p]}"
 
-	for p in ${!idx[*]}; do
-		n="${add[p]}"
-		a="${mul[p]}"
-		p="${idx[p]}"
+    printf -v i "%d" "0x${md5sum:p:1}"; i="$[n + i]"
+    printf -v s "%d" "0x${md5sum:i:2}"
+    printf -v y "%x" "$[s*a]"
 
-    i="$[n + $(printf "%d" "0x${md5:p:1}")]"
-		s="$(printf "%d" "0x${md5:i:2}")"
-		y="$(printf "%x" "$[s*a]")"
+    napisum+="${y:${#y}-1:1}"
+  done
 
-		napi+="${y:${#y}-1:1}"
-	done
-
-  echo $napi
+  # RETURN: $napisum
 }
 
-fork__gen_md5_sums() {
-  local c
+get_hash() {
+  get_hash__md5sum "$1" \
+    && get_hash__napisum "$md5sum"
+  #RETURNVAR: $md5sum $napisum
+}
+
+generate_hashes() {
+  local c fid md5sum napisum
+
+  test "$#" = "0" && set -- "${files[@]}"
+
+  for ((c=1; $c <= $#; c++)); do
+    fid="$[c-1]" md5sum=0 napisum=0
+    test -z "${hashes[$fid]}" || continue
+    get_hash "${!c}" \
+      && hashes[$fid]="$md5sum $napisum"
+  done
+
+  #RETURNVAR: @hashes
+}
+
+#-------------------------------------------------------------------------------
+# Poll i forkowanie
+#-------------------------------------------------------------------------------
+napi_poll__fork_hash() {
+  local c md5sum napisum
 
   for ((c=0; $c < ${#files[@]}; c++)); do
-    __gen_md5_sums "$c" || napi_msg "$c" "$?"
+    md5sum=0 napisum=0
+
+    if [ -n "${hashes[$fid]}" ]; then
+      md5sum="${hashes[$fid]%% *}"
+      napisum="${hashes[$fid]##* }"
+    fi
+
+    test "$md5sum" != "$napisum" \
+      || get_hash "${files[$c]}"
+
+    echo "$? $c $md5sum $napisum" >&4
   done
+
+  echo bye >&4
+}
+
+napi_poll__fork_download() {
+  local ret=0
+  local -a childARG
+
+  enabled "$auth_login" || unset napi_nick napi_pass
+
+  while read -a childARG; do
+    test "${childARG[0]}" = "bye" && break
+
+    sub_download "${childARG[@]}"
+    childARG[0]=$?
+
+    echo "${childARG[@]}" >&3
+  done <&4
 
   echo bye >&3
 }
 
 napi_poll() {
+  read CACHE < <(mktemp -u -d -p "$NB_CACHEDIR" $$.XXXX)
+  mkdir -p "$CACHE"
+  NB_USERBREAK=0
+
+  # Obsługa sygnałów / czyszczenie
+  trap 'kill ${NB_childPID[@]} &> /dev/null; rm -rf "$CACHE"' EXIT
+  trap 'NB_USERBREAK=1; kill ${NB_childPID[@]} &> /dev/null; echo bye >&3; echo -ne "\n*** Przerwane przez użytkownika ***\n"' SIGINT
+
+# Tworzenie fifo (kolejka: "pierwszy wchodzi, pierwszy wychodzi")
+# do komunikacji pomiędzy forkiem a rodzicem
+  # tworzenie fifo
+  mkfifo "$CACHE/hash.fifo" "$CACHE/download.fifo"
+
+  # otwieranie fifo fd
+  exec 4<>"$CACHE/hash.fifo" 3<>"$CACHE/download.fifo"
+
+  napi_poll__fork_hash      & NB_childPID+=($!)
+  napi_poll__fork_download  & NB_childPID+=($!)
+
+  local ext
+  local -a childARG
+
+  validate_auth
+
   while read -a childARG; do
     test "${childARG[0]}" = "bye" && break
-    napi_downloader "${childARG[@]}"; napi_msg "${childARG[0]}" "$?"
+
+    if [ "${childARG[0]}" = "0" ]; then
+      # Konwertowanie strony kodowej
+      subcp_convert "${childARG[@]}" || napi_msg "${childARG[1]}" "$?"
+
+      subeol_convert "${childARG[@]}"
+
+      # Konwetowanie formatu napisów i/lub pobieranie rozszerzenia o ile subext ma prefix
+      subfmt_convert "${childARG[@]}" || napi_msg "${childARG[1]}" "$?"
+
+      # Instalowanie napisów
+      subext="$ext" sub_install "${childARG[@]}"
+      childARG[0]=$?
+    elif [ "${childARG[0]}" -lt "100" ]; then
+      subretry_store "${childARG[@]}"
+    fi
+
+    napi_msg "${childARG[1]}" "${childARG[0]}"
   done <&3
+
+  trap 'NB_USERBREAK=1; echo -ne "\n*** Przerwane przez użytkownika ***\n"' SIGINT
+
+  # zamykanie fifo fd
+  exec 3>&- 4>&-
 }
 
 
+#-------------------------------------------------------------------------------
+# Wznawianie pobierania  TODO
+#-------------------------------------------------------------------------------
+subretry_store() {
+  enabled "$subretry_store" || return 0
+  local file="${files[$2]}" md5sum="$3" napisum="$4"
+  test -d "$CACHEDIR/subretry/" || mkdir -p "$CACHEDIR/subretry/"
+  echo "$file" > "$CACHEDIR/subretry/${md5sum}_${napisum}"
+}
+
+subretry_restore() {
+  enabled "$subretry_restore" || return 0
+  test -d "$CACHEDIR/subretry/" || return 1
+
+  local file sums i
+  local -i c="${#files[@]}"
+
+  for i in "$CACHEDIR/subretry/"*; do
+    read file < "$i"
+    if ! [ -f "$file" ]; then
+      unlink "$i"
+      continue
+    fi
+    sums="${i##*/}"
+    sums="${sums//_/ }"
+    if [ -n "$sums" ]; then
+      files[$c]="$file"
+      hashes[$c]="$sums"
+      c+=1
+    fi
+  done
+  #RETURNVAR: @files[c,..] @hashes[c,..]
+}
 
 #-------------------------------------------------------------------------------
 #  Pobieranie napisów
 #-------------------------------------------------------------------------------
-napi_downloader() {
-  test -n "$1" -a -n "$2" || return 1
+downloader() {
+  local dlcmd="$DLAGENT" url="$1" dlfile="$2"
 
-  local md5="$2"
-  local napi="$(__gen_napi_sums "$md5")" || return 1
-  local path="${files[$1]}"
-  local npath="${path%.*}"
-  local dlcmd="$DLAGENT"
-  local dlfile="/tmp/napis.$md5.7z"
-	local url="http://napiprojekt.pl/unit_napisy/dl.php?l=${napi_lang:-"PL"}&f=${md5}&t=${napi}&v=other&kolejka=false&nick=${napi_nick}&pass=${napi_pass}&napios=posix"
-
-
-  # ILITERACJA W NAZWIE W PRZYPADKU BRAKU PRZYWOLENIA NA NADPIS
-  if [ -e "$npath.$subext" -a "$suboverwrite" == "0" ]; then
-    local -i c
-    for ((c=0; $c < 100; c++)); do
-      test -f "$npath.$c.$subext" || break
-    done
-    npath="$npath.$c"
-  fi
-
-  # POBIERANIE ARCHIWUM 7Z Z NAPISAMI
-  # (niestety ograniczenia 7z sprawiają że musi być plik)
   if [[ $dlcmd = *%o* ]]; then
-		dlcmd=${dlcmd//\%o/\"$dlfile\"}
+    dlcmd=${dlcmd//\%o/\"$dlfile\"}
   else
     return 254
-	fi
-  if [[ $dlcmd = *%u* ]]; then
-		dlcmd=${dlcmd//\%u/\"$url\"}
-	else
-		dlcmd="$dlcmd \"$url\""
-	fi
-
-  local ret=0
-	eval "$dlcmd || ret=\$?"
-	if [ "$ret" != "0" ]; then
-		test -f "$dlfile" && unlink "$dlfile"
-		return 255
-	fi
-
-  # ROZPAKOWYWANIE NAPISÓW DO ZMIENNEJ
-  local subtitle="$("$BIN_7z" x -y -so -piBlm8NTigvru0Jr0 "$dlfile" 2>/dev/null)"
-  test -f "$dlfile" && unlink "$dlfile"
-
-  # ZMIENNA JEST PUSTA - BRAK NAPISÓW
-  [ -n "$subtitle" ] || return 1
-
-  # NIE DA SIĘ UTWORZYĆ PLIKU - ZASÓB TYLKO DO ODCZYTU
-  touch "$npath.$subext"
-  if [ ! -e "$npath.$subext" ]; then
-    return 2
   fi
 
-  # PORÓWNYWANIA STRON KODOWYCH
-  local subcp_conv_from="" subcp_conv_to=""
+  if [[ $dlcmd = *%u* ]]; then
+    dlcmd=${dlcmd//\%u/\"$url\"}
+  else
+    dlcmd="$dlcmd \"$url\""
+  fi
 
-  if [ -n "$subcp_conv" ]; then
-    case "${subcp_conv:0:1}" in
-      [Uu]) subcp_conv_to="UTF8";;
-      [Ii]) subcp_conv_to="ISO-8859-2";;
-      [Ww]) subcp_conv_to="WINDOWS-1250";;
-    esac
+  local ret=0
+  eval "$dlcmd || ret=\$?"
+  if [ "$ret" != "0" ]; then
+    test -f "$dlfile" && unlink "$dlfile"
+    return 255
+  fi
 
-    if [ -n "$subcp_conv_to" ] \
-      && local encodingtype="$(file \
-        --brief \
-        --mime-encoding \
-        --exclude apptype \
-        --exclude tokens \
-        --exclude cdf \
-        --exclude compress \
-        --exclude elf \
-        --exclude soft \
-        --exclude tar \
-        - <<< "$subtitle")" \
-      && [ -n "$encodingtype" ]
-    then
-      case "${encodingtype,,}" in
-        *utf*) subcp_conv_from="UTF8";;
-        *iso*) subcp_conv_from="ISO-8859-2";;
-        *ascii*) subcp_conv_to="";;
-        *) subcp_conv_from="WINDOWS-1250";;
+  test -s "$dlfile" || return 255
+}
+
+sub_download() {
+  test "$1" = "0" || return $1
+  local fid="$2" md5="$3" napi="$4"
+
+  local dlfile="$CACHE/_${md5}_${napi}.7z"
+  local subfile="$CACHE/_${md5}_${napi}.sub"
+
+  local url="http://napiprojekt.pl/unit_napisy/dl.php?l=${napi_lang:-"PL"}&f=${md5}&t=${napi}&v=other&kolejka=false&nick=${napi_nick}&pass=${napi_pass}&napios=posix"
+
+  # POBIERANIE ARCHIWUM 7Z Z NAPISAMI
+  downloader "$url" "$dlfile" || return $?
+
+  # SPRAWDZANIE ZAWARTOŚCI POBRANEGO PLIKU
+  ### czasami jest tam tekst typu "Przerwa techniczna"
+  local -i dlfile_size=0
+  read dlfile_size < <(stat -c "%s" -- "$dlfile" 2> /dev/null)
+
+  if [ "$dlfile_size" -le "200" ]; then
+    local dlfile_mime
+    read dlfile_mime < <(file \
+      --brief \
+      --exclude apptype \
+      --exclude encoding \
+      --exclude tokens \
+      --exclude cdf \
+      --exclude compress \
+      --exclude elf \
+      --exclude tar \
+      --exclude soft \
+      --mime-type \
+      -- "$dlfile")
+
+    if [ "$dlfile_mime" = "text/plain" ]; then
+      local dlfile_source
+      read dlfile_source < "$dlfile"
+      unlink "$dlfile"
+      case "${dlfile_source,,}" in
+        *"przerwa techniczna"*) return 200;;
+        npc0) return 1;;
+        *) return 201;;
       esac
-    else
-      subcp_conv_to=""
-      subcp_conv_from=""
     fi
   fi
 
-  # PORÓWNYWANIE STRON KODOWYCH I ZAPIS
-  #-------------------------------------
-  # Schemat postępowania: sprawdź czy istnieje potrzeba konwertowania
-  #   nie) tylko catnij
-  #   tak) przekonwertuj do pliku i w razie błędu nadpisz catem
-  test "$subcp_conv_to" != "$subcp_conv_from" \
-    && "$BIN_iconv" -f "$subcp_conv_from" -t "$subcp_conv_to" > "$npath.$subext" 2> /dev/null <<< "$subtitle" \
-    || cat > "$npath.$subext" 2> /dev/null <<< "$subtitle"
 
-  # GDY PLIK JEST PUSTY
-  if [ ! -s "$npath.$subext" ]; then
-    unlink "$npath.$subext"
-    return 3
+  # ROZPAKOWYWANIE NAPISÓW
+  "$BIN_7z" x -y -so -piBlm8NTigvru0Jr0 "$dlfile" > "$subfile" 2>/dev/null
+  test -f "$dlfile" && unlink "$dlfile"
+
+  # PLIK JEST PUST (A NIE POWINIEN)
+  if ! [ -s "$subfile" ]; then
+    unlink "$subfile"
+    return 202
   fi
 
-  # WSZYSTKO POSZŁO DOBRZE
+  return 0
+}
+
+subfmt_convert__fps__mplayer() {
+  local bin="$1" file="$2"
+  fps_sub=
+  local output="$("$bin" \
+    -really-quiet \
+    -vo null \
+    -ao null \
+    -frames 1 \
+    -identify \
+    -- "$file" 2> /dev/null)" \
+    && [[ "$output" =~ 'ID_VIDEO_FPS='([0-9.]*) ]] \
+    && fps_sub="${BASH_REMATCH[1]}"
+  #RETURNVAR: $fps_sub
+}
+
+subfmt_convert__fps__mpv() {
+  local bin="$1" file="$2"
+  fps_sub=
+
+  local -a args
+  local msg="::NAPI-BASH::FPS=" line
+
+  case "$fps_detect_mpv_version" in
+    0.3)
+      args=("--playing-msg=$msg\${=fps}" --vo=null
+      --ao=null --frames=1 --quiet --no-cache --no-config)
+      ;;
+    0.4)
+      args=("--term-playing-msg=$msg\${=fps}" --vo=null
+      --ao=null --frames=1 --quiet --no-cache --no-config)
+      ;;
+    *) return 1
+  esac
+
+  # notka: ten test robi za returna
+  while read line; do
+    test "${line:0:${#msg}}" = "$msg" \
+      && fps_sub="${line:${#msg}}" \
+      && break
+  done < <("$bin" "${args[@]}" -- "$file" 2>&1)
+
+  #RETURNVAR: $fps_sub
+}
+
+subfmt_convert__fps__mediainfo() {
+  local bin="$1" file="$2"
+  read fps_sub < <("$bin" --Output='Video;%FrameRate%' -- "$file")
+  #RETURNVAR: $fps_sub
+}
+
+subfmt_convert__fps__ffprobe() {
+  fps_sub=
+  if [ -z "$BIN_bc" ]; then
+    local findbin_ret
+    findbin bc && BIN_bc="$findbin_ret" || return 1
+  fi
+
+  local bin="$1" file="$2" i
+  local -a fps
+  IFS=, read -a fps < <("$bin" \
+      -v 0 \
+      -select_streams v \
+      -print_format csv \
+      -show_entries stream=avg_frame_rate,r_frame_rate \
+      -- "$file") \
+    && [ "${#fps[@]}" = "3" ] \
+    || return 1
+
+  for i in 1 2; do
+    if [ "${fps[i]}" != "0/0" ]; then
+      read fps_sub < <("$BIN_bc" <<< "scale=3;${fps[i]}") && return 0
+    fi
+  done
+
+  return 1
+  #RETURNVAR: $fps_sub $BIN_bc
+}
+
+subfmt_convert__fps() {
+  fps_ret=
+  test "${#BIN_subotage__fps_f[@]}" = "0" && return 1
+
+  local fid="$1" LANG=C
+  local i b f fps_sub
+
+  for ((i=0; i <= ${#BIN_subotage__fps_f[@]}; i++)); do
+    b="${BIN_subotage__fps_b[i]}"
+    f="${BIN_subotage__fps_f[i]}"
+    # subfmt_convert__fps__* ustawiają zmianną fps
+    subfmt_convert__fps__$f "$b" "${files[$fid]}" \
+      && [ -n "$fps_sub" ] \
+      && printf -v fps_ret "%.3f" "$fps_sub" \
+      && return 0
+  done
+
+  return 1
+  #RETURNVAR: $fps_ret
+}
+
+subfmt_convert__fmt_detect() {
+  local file="$1" line
+  local -i c=0 max_lines=40
+
+  fmt_detect_ret=
+
+  # szybsze od subotage.sh o ok 10 do 300 razy... Wykrywa te same formaty.
+  while read line; do
+    c+=1; test "$c" -gt "$max_lines" && break
+
+    case "${line:0:1}" in
+      "[")
+        if [[ "$line" =~ ^'['[0-9]+']['[0-9]*']' ]]; then
+          fmt_detect_ret='mpl2'
+          break
+        fi
+        ;;
+      "{")
+        if [[ "$line" =~ ^'{'[0-9]+'}{'[0-9]*'}' ]]; then
+          fmt_detect_ret='microdvd'
+          break
+        fi
+        ;;
+      0)
+        case "$line" in
+          00:[0-5][0-9]:[0-5][0-9],[0-9][0-9][0-9]' --> '00:[0-5][0-9]:[0-5][0-9],[0-9][0-9][0-9]*)
+            fmt_detect_ret='subrip'
+            break
+            ;;
+          00:[0-5][0-9]:[0-5][0-9]:[0-9][0-9],00:[0-5][0-9]:[0-5][0-9]:[0-9][0-9]*)
+            fmt_detect_ret='subview'
+            break
+            ;;
+          00:[0-5][0-9]:[0-5][0-9]:*)
+            fmt_detect_ret='tmplayer'
+            break
+            ;;
+          *)
+            if [[ "$line" =~ ^[0-9]+[[:space:]]:[[:space:]]00:[0-5][0-9]:[0-5][0-9]:[0-9]{2}[[:space:]]+00:[0-5][0-9]:[0-5][0-9]:[0-9]{2} ]]; then
+              fmt_detect_ret='fab'
+              break
+            fi
+        esac
+    esac
+  done < "$file"
+
+  # fallback - tak na wszelki wypadek, nigdy nic nie wiadomo...
+  if [ -z "$fmt_detect_ret" ] && [ -n "$BIN_subotage" ]; then
+    enabled "$DEBUG" && echo "!! [ fmt_detect ]: fallback do subotage..."
+
+    local -a ifmt
+    IFS=" " read -a ifmt < <(LANG=C "$BIN_subotage" -gi "$file" 2>&1)
+
+    if [ "${ifmt[0]}" != "not detected" ]; then
+      case "${ifmt[0]}" in
+        microdvd|mpl2|subrip|tmplayer|subviewer|fab) fmt_detect_ret="${ifmt[0]}";;
+      esac
+    fi
+  fi
+
+  test -n "$fmt_detect_ret"
+  #RETURNVAR: $fmt_detect_ret
+}
+
+subfmt_convert() {
+  ext="${subext:-"txt"}"
+
+  # Wyjdź jeśli nie ustawiono: subext_autodetect i subfmt_conv
+  enabled "$subext_autodetect" || test -n "$subfmt_conv" || return 0
+
+  # Zmienne lokalne
+  local fid="$1" md5="$3" napi="$4"
+  local subfile="$CACHE/_${md5}_${napi}.sub"
+  local subftmp="$CACHE/_${md5}_${napi}.subfmt.tmp"
+  local output fmt_detect_ret i fps_ret fps_opts
+
+  # Detekcja (potrzebne dla obu: subext_autodetect i subfmt_conv)
+  subfmt_convert__fmt_detect "$subfile" || return 100
+  enabled "$subext_autodetect" && ext="${subfmt_ext[$fmt_detect_ret]}"
+
+  # Zatrzymaj tutaj jeśli nie ustawiono subfmt_conv
+  test -z "$subfmt_conv" && return 0
+
+  # Konwersja nie jest potrzebna, plik już jest w tym formacie
+  test "$subfmt_conv" = "$fmt_detect_ret" && return 0
+
+  # Jedyny obsługiwany format, który wymaga FPS pliku filmowego to microdvd
+  test "$subfmt_conv" = "microdvd" && fps_opts="-fo"
+  test "$fmt_detect_ret"  = "microdvd" && fps_opts="-fi"
+
+  # Wczytywanie FPS dla konwersji z/do microdvd
+  if [ -n "$fps_opts" ]; then
+    if ! subfmt_convert__fps "$fid"; then
+      return 101
+    fi
+  fi
+
+  # Czas wygasania napisu
+  local lasting_time_opts
+  test -n "$subfmt_lasting_time" \
+    && test -z "${subfmt_lasting_time//[0-9]/}" \
+    && lasting_time_opts="--lasting-time $subfmt_lasting_time"
+
+  # Przeprowadzanie konwersji i zapis stanu w subostat
+  local subostat='Done' line
+
+  while read line; do
+    if [ "$subostat" = "Done" ]; then
+      case "$line" in
+        "An error occured"*) subostat='Error';;
+      esac
+    else
+      subostat="$line"
+      break
+    fi
+  done < <(LANG=C "$BIN_subotage" $fps_opts $fps_ret $lasting_time_opts \
+    -if "$fmt_detect_ret" \
+    -i "$subfile" \
+    -o "$subftmp" \
+    -of "$subfmt_conv" 2>&1)
+
+  # Przeprowadzanie post-operacji według subostat
+  case "$subostat" in
+    'Done')
+      test -f "$subftmp" \
+        && cp \
+          --remove-destination \
+          --no-target-directory \
+          --dereference \
+          -- "$subftmp" "$subfile" &> /dev/null \
+        && unlink "$subftmp" \
+        || return 101
+      ;;
+    "No convertion is needed"*)
+      true
+      ;;
+    *)
+      enabled "$DEBUG" && echo "!! [ subotage ]: $subostat"
+      return 101
+  esac
+
+  # Rozszerzenie zgodne z formatem lub subext
+  test -n "${subfmt_ext[$subfmt_conv]}" \
+    && ext="${subfmt_ext[$subfmt_conv]}" \
+    || ext="${subext:-"txt"}"
+
+  return 0
+
+  #RETURNVAR: $ext
+}
+
+subcp_convert() {
+  test -n "$subcp_conv" || return 0
+  local md5="$3" napi="$4"
+
+  # LOKALIZACJE PLIKU
+  local subfile="$CACHE/_${md5}_${napi}.sub"
+
+  # DETEKCJA KONWERTOWANIA
+  local from to="$subcp_conv" subcp_conv_to="$subcp_conv" enctype
+
+  read enctype < <(file \
+    --brief \
+    --mime-encoding \
+    --exclude apptype \
+    --exclude tokens \
+    --exclude cdf \
+    --exclude compress \
+    --exclude elf \
+    --exclude soft \
+    --exclude tar \
+    -- "${subfile}")
+
+  if [ "$?" = "0" ] && [ -n "$enctype" ]; then
+    case "${enctype,,}" in
+      *utf*) from="UTF8";;
+      *iso*) from="ISO-8859-2";;
+      *ascii*) to= ;;
+      *) from="WINDOWS-1250";;
+    esac
+  else
+    to= from=
+  fi
+
+  # PORÓWNYWANIE STRON KODOWYCH I ZAPIS
+  if [ "$from" != "$to" ]; then
+    # Tworzenie kopii zapasowa oryginału
+    local subftmp="$CACHE/_${md5}_${napi}.subcp.tmp"
+    if ! cp \
+        --remove-destination \
+        --no-target-directory \
+        --dereference \
+        -- "$subfile" "$subftmp" &> /dev/null
+    then
+      test -f "$subftmp" && unlink "$subftmp"
+      return 102
+    fi
+
+    # Konwertowanie
+    "$BIN_iconv" \
+      -f "$from" \
+      -t "$to" > "$subftmp" 2> /dev/null < "$subfile" \
+    && cp \
+      --remove-destination \
+      --no-target-directory \
+      --dereference \
+      -- "$subftmp" "$subfile" &> /dev/null
+
+    # SPrzątanie
+    local ret=$?
+    unlink "$subftmp"
+    test "$ret" = "0" || return 102
+  fi
+
+  return 0
+}
+
+subeol_convert() {
+  local md5="$3" napi="$4"
+  local subfile="$CACHE/_${md5}_${napi}.sub"
+
+  case "${subeol_conv,,}" in
+    u*|l*) sed -r 's/\r?$//g'   -i "$subfile";;
+    d*|c*) sed -r 's/\r?$/\r/g' -i "$subfile";;
+  esac || true
+}
+
+sub_install() {
+  local fid="$2" md5="$3" napi="$4"
+
+  local path="${files[$fid]%.*}"
+  local pref="${subext_prefix:+"."}$subext_prefix"
+
+  local from="$CACHE/_${md5}_${napi}.sub"
+  local to="$path$pref.$subext"
+
+  # ILITERACJA W NAZWIE W PRZYPADKU BRAKU PRZYWOLENIA NA NADPIS
+  if [ -e "$to" -a "$suboverwrite" == "0" ]; then
+    local -i c
+    for ((c=0; $c < 100; c++)); do
+      test -f "$path.$c$pref.$subext" || break
+    done
+    to="$path.$c$pref.$subext"
+  fi
+
+  # INSTALACJA PLIKU (I GDY PLIK JEST PUSTY)
+  if ! cp \
+    --preserve=timestamps \
+    --remove-destination \
+    --no-target-directory \
+    --dereference \
+    -- "$from" "$to" &> /dev/null; then
+    if [ -f "$to" ]; then
+      unlink "$to"
+      return 3
+    else
+      return 2
+    fi
+  fi
+
   return 0
 }
 
@@ -581,57 +1372,179 @@ napi_downloader() {
 #-------------------------------------------------------------------------------
 #  Sprawdzanie
 #-------------------------------------------------------------------------------
-#login_check() {
-#  "http://www.napiprojekt.pl/users_check.php?nick=%s&pswd=%s"
-#}
+uri_encode() {
+  # http://stackoverflow.com/questions/296536/urlencode-from-a-bash-script/2027690
+  local string="$1" o LANG=C
+  local -i i=0
 
-checkbin_iconv() {
-  if ! BIN_iconv="$(findbin iconv)"; then
+  uri_encode_ret=
+
+  for (( i=0 ; i<${#string} ; i++ )); do
+    c="${string:$i:1}"
+    case "$c" in
+      [-_.~a-zA-Z0-9]) o="${c}" ;;
+      *)
+        printf -v o '%%%02x' "'$c"
+    esac
+    uri_encode_ret+="${o}"
+  done
+
+  #RETURNVAR: $uri_encode_ret
+}
+
+validate_auth() {
+  enabled "$auth_login" || return 0
+
+  local auth_status="Zły login lub hasło..."
+  local uri_encode_ret
+
+  if [ -n "$auth_nick" -a -n "$auth_pass" ] \
+    && uri_encode "$auth_nick" \
+    && napi_nick="$uri_encode_ret" \
+    && uri_encode "$auth_pass" \
+    && napi_pass="$uri_encode_ret"
+  then
+    local url="http://www.napiprojekt.pl/users_check.php?nick=$napi_nick&pswd=$napi_pass"
+
+    if downloader "$url" "$CACHE/auth_status.txt"; then
+      read auth_status < "$CACHE/auth_status.txt"
+      test "$auth_status" = "ok" && return 0
+    fi
+  fi
+
+  warn "Autoryzacja nie powiodła się: $auth_status"
+  unset napi_nick napi_pass
+
+  return 1
+}
+
+setup_var_sublang() { #TODO
+  test -n "$sublang" || return 0
+  local uri_encode_ret
+  uri_encode "$sublang" \
+    && napi_lang="$uri_encode_ret" # TODO: sprawdzanie czy język jest obsługiwany
+  unset sublang
+  return 0
+}
+
+setup_var_filesize() {
+  # równo 10MiB to min rozmiar pliku dla hasha...
+  [ "${filesize_ge:-"0"}" != "0" ] \
+    && [ -z "${filesize_ge//[0-9]/}" ] \
+    && [ "$filesize_ge" -ge "10" ] \
+    || filesize_ge=10
+
+  [ "${filesize_le:-"0"}" != "0" ] \
+    && [ -z "${filesize_le//[0-9]/}" ] \
+    && [ "$filesize_le" -lt "10" ] \
+    || unset filesize_le
+}
+
+setup_bin_iconv() {
+  test -n "$subcp_conv" || return 0
+
+  case "${subcp_conv,,}" in
+    u*) subcp_conv="UTF8";;
+    i*) subcp_conv="ISO-8859-2";;
+    w*) subcp_conv="WINDOWS-1250";;
+    *)
+      subcp_conv=""
+      warn "Nieobsługiwana strona kodowa dla subcp_conv, pomijam..."
+      return 0
+  esac
+
+  local findbin_ret
+  if findbin iconv; then
+    BIN_iconv="$findbin_ret"
+  else
     subcp_conv=""
-    warn "Aby móc korzystać z opcji subcp_conv, zainstaluj iconv"
+    warn "Aby móc korzystać z opcji subcp_conv, zainstaluj iconv..."
   fi
 }
 
-checkbin_7z() {
-  if ! BIN_7z="$(findbin 7z 7za)"; then
-    error "Aby móc rozpakować archiwum z napisami zainstaluj p7zip"
+setup_bin_subotage() {
+  test -n "$subfmt_conv" || return 0
+
+  case "${subfmt_conv,,}" in
+    f*)    subfmt_conv=fab;;
+    mi*)   subfmt_conv=microdvd;;
+    mp*)   subfmt_conv=mpl2;;
+    subv*) subfmt_conv=subviewer;;
+    subr*) subfmt_conv=subrip;;
+    t*)    subfmt_conv=tmplayer;;
+    *)
+      subfmt_conv=""
+      warn "Nieobsługiwana format napisów dla subfmt_conv, pomijam..."
+      return 1
+  esac
+
+  local findbin_ret
+  if findbin subotage.sh subotage; then
+    BIN_subotage="$findbin_ret"
+    setup_bin_subotage__fps
+  else
+    subfmt_conv=""
+    warn "Aby móc korzystać z opcji subfmt_conv, zainstaluj subotage..."
   fi
+}
+
+setup_bin_subotage__fps() {
+  local i f bin findbin_ret
+
+  for i in "${fps_detect_tools[@]}"; do
+    if findbin "$i"; then
+      f="${i//[^[:alnum:]]/_}"
+      if is_function "subfmt_convert__fps__$f"; then
+        BIN_subotage__fps_b+=("$findbin_ret")
+        BIN_subotage__fps_f+=("$f")
+      fi
+    fi
+  done
+
+  if [ "${#BIN_subotage__fps_f[@]}" = "0" ]; then
+    local tools
+    for i in "${fps_detect_tools[@]}"; do
+      tools+="${tools:+", "}$i"
+    done
+    warn "Konwersja formatów wymaga detekcji ilości klatek na sekundę. Zainstaluj: $tools"
+  fi
+}
+
+setup_bin_7z() {
+  local findbin_ret
+  if findbin 7za 7z; then
+    BIN_7z="$findbin_ret"
+  else
+    error "Aby móc rozpakować archiwum z napisami zainstaluj p7zip..."
+  fi
+  #RETURNVAR: BIN_7z
 }
 
 findbin() {
   local line
+  findbin_ret=
   while [ -n "$1" ]; do
     while read -d: line; do
       if [ -x "$line/$1" ]; then
-        echo "$line/$1"
+        findbin_ret="$line/$1"
         return 0
       fi
     done <<< "$PATH"
     shift
   done
   return 1
+  #RETURNVAR: $findbin_ret
 }
 
 #-------------------------------------------------------------------------------
 #  Główny kod / main()
 #-------------------------------------------------------------------------------
-# main() {
-fifo="$(mktemp -t -u napi-bash.$$.XXXXXX)"
-USERBREAK=0
+main() {
+  early "$@"
+  ARGV "$@" || return 1
+  napi_poll
+  napi_raport
+}
 
-# Tworzenie fifo (kolejka: "pierwszy wchodzi, pierwszy wychodzi")
-# do komunikacji pomiędzy forkiem a rodzicem
-mkfifo "$fifo"
-exec 3<>"$fifo"
-
-# Obsługa sygnałów / czyszczenie
-trap 'kill $childPID &> /dev/null; rm -f "$fifo"' EXIT
-trap 'USERBREAK=1; kill $childPID &> /dev/null; echo bye >&3; echo -ne "\n*** Przerwane przez użytkownika ***\n"' SIGINT
-
-get_ARGV "${@}"
-fork__gen_md5_sums & childPID=$!
-napi_poll    # { child > fifo } & { poll < fifo }
-napi_raport
-
-exit 0
-# }
+# Nie wykonuj funkcji main, gdy użyty przez source
+[ "${BASH_SOURCE[0]}" != "${0}" ] || main "$@"
