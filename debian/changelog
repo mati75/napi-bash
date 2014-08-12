@@ -1,0 +1,5 @@
+napi-bash (0.50.3-1) UNRELEASED; urgency=low
+
+  * Initial release. (Closes: #729473)
+
+ -- Mateusz Łukasik <mati75@linuxmint.pl>  Sat, 25 Jan 2014 20:43:22 +0100
