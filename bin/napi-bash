@@ -1,11 +1,13 @@
 #!/bin/bash
-NB_VERSION="0.50"
+shopt -s extglob
+
+NB_VERSION="1.0"
 NB_CONFIGDIR="${NB_CONFIGDIR:-"${XDG_CONFIG_HOME:-"${HOME}/.config"}/napi-bash"}"
 NB_CACHEDIR="${NB_CACHEDIR:-"${XDG_CACHE_HOME:-"${HOME}/.cache"}/napi-bash/"}"
 NB_CONFIG="${NB_CONFIG:-"$NB_CONFIGDIR/config"}"
 
 declare -a files hashes
-declare -A subfmt_ext
+declare -A subfmt_ext notifications_fmt
 
 subfmt_ext[fab]=txt
 subfmt_ext[microdvd]=sub
@@ -27,12 +29,13 @@ suboverwrite=nie
 subskipifexist=nie
 subretry_restore=nie
 subretry_store=nie
+notifications=tak
 colors=tak
 videoext_match=dir
 videoext=(.{3gp,avi,asf,divx,m{4,k,o}v,mp{4,e,eg,g},ogg,ogv,rmvb,wmv,qt})
 DLAGENT="curl -fLsS --retry 3 --retry-delay 3 -o %o %u"
 msg_raport="Łącznie pobranych napisów: %b%d/%a%B"
-msg_status[0]="%2%bPobrano%R dla %i%f"
+msg_status[0]="%2%bPobrano%R dla %i%{file-uri:f}"
 msg_status[1]="%1%bBrak napisów%R dla %i%f"
 msg_status[2]="%1Brak uprawnień do zapisu w folderze z plikiem: %f"
 msg_status[3]="%1Niewystarczająca ilość wolnego miejsca na urządzeniu z plikiem: %f"
@@ -48,30 +51,35 @@ raport_gui_enabled=tak
 raport_cli_enabled=tak
 gui_int_warn=tak
 
-gui_msg_fmt="gui_xml"
-cli_msg_fmt="cli_esc"
-gui_raport_fmt="gui_xml"
-cli_raport_fmt="cli_esc"
-
 # obsługiwane wersje to: "0.3", "0.4"
-fps_detect_mpv_version="0.4" #CHANGEME#
-
+fps_detect_mpv_version="0.4"
 fps_detect_tools=(ffprobe mediainfo mplayer mpv)
 
-gui_msg() {
-  # 1 = type
-  # 2 = msg
-  if [ "$1" = "raport" ]; then
-    notify-send -c "transfer.complite" -t 5000 -i "text-x-generic" "napi-bash" "$2"
-  elif [ "$1" = "0" ]; then
-    notify-send -c "transfer" -t 5000 -i "info" "napi-bash" "$2"
-  else
-    notify-send -c "transfer.error" -t 5000 -i "dialog-warning" "napi-bash: problem" "$2"
-  fi
-}
+notifications_tools=(notify-send terminal-notifier growlnotify)
+notifications_fmt[notify-send]="xml"
+notifications_fmt[terminal-notifier]="plain"
+notifications_fmt[growlnotify]="plain"
 
-custom_raport() {
-  return 1
+
+gui_msg__notify_send() {
+  case "$type" in
+    raport) notify-send -c "transfer.complite" -t 5000 -i "text-x-generic" -- "napi-bash" "$msg";;
+    0) notify-send -c "transfer" -t 5000 -i "info" -- "napi-bash" "$msg";;
+    *) notify-send -c "transfer.error" -t 5000 -i "dialog-warning" -- "napi-bash: ostrzeżenie" "$msg"
+  esac
+}
+gui_msg__terminal_notifier() {
+  case "$type" in
+    raport) terminal-notifier -title 'napi-bash' -message "$msg";;
+    0) terminal-notifier -title 'napi-bash' -message "$msg";;
+    *) terminal-notifier -title 'napi-bash: ostrzeżenie' -message "$msg"
+  esac
+}
+gui_msg__growlnotify() {
+  case "$type" in
+    raport|0) growlnotify "napi-bash" -m "$msg";;
+    *) growlnotify "napi-bash: ostrzeżenie" -m "$msg"
+  esac
 }
 
 enabled() {
@@ -90,9 +98,9 @@ load_config() {
     opt="$1"; shift
     case "${opt}" in
       --config=*)
-        if [ -f "${opt#*=}" -a -r "${opt#*=}"]; then
+        if [ -f "${opt#*=}" ] && [ -r "${opt#*=}"]; then
           config="${opt#*=}"
-        elif [ -f "$NB_CONFIGDIR/${opt#*=}" -a -r "$NB_CONFIGDIR/${opt#*=}" ]; then
+        elif [ -f "$NB_CONFIGDIR/${opt#*=}" ] && [ -r "$NB_CONFIGDIR/${opt#*=}" ]; then
           config="$NB_CONFIGDIR/${opt#*=}"
         fi
         break
@@ -104,7 +112,7 @@ load_config() {
 
   if [ -z "$config" ]; then
     config="$NB_CONFIGDIR/config"
-    test -f "$config" -a -r "$config" || return 1
+    test -f "$config" && test -r "$config" || return 1
   fi
 
   source "$config"
@@ -140,21 +148,21 @@ warn() {
   local print_msg_fmt_ret
   print_msg_fmt "0;33;1" "Uwaga:" "0" "$1" \
     && printfo STDERR "$print_msg_fmt_ret"
-  test -n "$DISPLAY" && enabled "$gui_int_warn" && gui_msg "warn" "$1" &> /dev/null &
+  enabled "$gui_int_warn" && gui_msg "warn" "$1" &> /dev/null &
   return 1
 }
 error() {
   local print_msg_fmt_ret
   print_msg_fmt "0;31;1" "Błąd:" "0" "$1" \
     && printfo STDERR "$print_msg_fmt_ret"
-  test -n "$DISPLAY" && gui_msg "error" "$1" &> /dev/null &
+  gui_msg "error" "$1" &> /dev/null &
   return 1
 }
 print_msg_fmt() {
   if enabled "$colors"; then
-    printf -v print_msg_fmt_ret '\e[%sm%s\e[%sm %s...\e[0m\n' "$@"
+    printf -v print_msg_fmt_ret -- '\e[%sm%s\e[%sm %s...\e[0m\n' "$@"
   else
-    printf -v print_msg_fmt_ret '%s %s...\n' "$2" "$4"
+    printf -v print_msg_fmt_ret -- '%s %s...\n' "$2" "$4"
   fi
 }
 
@@ -170,24 +178,47 @@ printfo() {
     esac && shift
   fi
 
-  printf "$@" >&$t
+  printf -- "$@" >&$t
+}
+
+gui_msg() {
+  local type="$1" msg="$2"
+
+  is_function "gui_msg__$NB_notify_tool" \
+    && "gui_msg__$NB_notify_tool"
 }
 
 is_function() {
   declare -F "$1" &> /dev/null
 }
 
+copyfile() {
+  case "$OSTYPE" in
+    linux-gnu) cp \
+         --remove-destination \
+         --no-target-directory \
+         --dereference \
+         -- "$1" "$2" &> /dev/null
+    ;;
+    *) cp -f -- "$1" "$2" &> /dev/null
+  esac
+}
+
 #-------------------------------------------------------------------------------
 #  Obsługa argumentów, wyszkiwanie i badanie plików..
 #-------------------------------------------------------------------------------
 usage() {
-  printf '%s wersja %s | 3ED <krzysztof1987@gmail.com>\n\n' \
-    "napi-bash" "$NB_VERSION"
+  local nb_name="${0##*/}"
 
-  printf 'Użycie:
-  napi-bash [opcje] <plik/folder> [kolejne pliki/foldery]
-  napi-bash <-h|--help>
+  printf -- '%s wersja %s | 3ED <krzysztof1987@gmail.com>\n' "$nb_name" "$NB_VERSION"
 
+  printf -- '
+Użycie:
+  %s [opcje] <plik/folder> [kolejne pliki/foldery]
+  %s <-h|--help>
+' "$nb_name" "$nb_name"
+
+  printf -- '
 Opcje:
   -o=<bool>, --suboverwrite=<bool>, --(no-)suboverwrite
       Nadpisuj pliki (ustawione: %s)
@@ -240,6 +271,9 @@ Opcje:
       Loguj się podanym wcześniej nickiem i hasłem.
       (ustawione: %s)
 
+  -N=<bool>, --notifications=<bool>
+      Wł/wył notyfikacje pulpitowe. (ustawione: %s)
+
   --debug=<plik>
       Tryb debugowy
 
@@ -261,7 +295,7 @@ Napi-bash opublikowano na licencji GPL3:
     "$subext" "$subext_autodetect" "$subext_prefix" \
     "$subfmt_conv" "$subcp_conv" "$subeol_conv" \
     "$auth_nick" "${auth_pass:+"***"}" "$auth_login" \
-    "${config:-"$NB_CONFIGDIR/config"}"
+    "$notifications" "${config:-"$NB_CONFIGDIR/config"}"
 
 #  -r=<bool>, --subretry-restore=<bool> [szkic/koncepcja]
 #      Wznawia pobierania wcześniej zakończone niepowodzeniem,
@@ -276,25 +310,21 @@ ARGV() {
   ARGV__getopts "$@" || return 1
 
   # niezbędny:
-  setup_bin_7z || return 1
+  setup_bin_7z \
+    && setup_bin_realpath \
+    || return 1
 
   # opjonalne:
   setup_bin_iconv
   setup_bin_subotage
+  setup_bin_dos2unix
+
+  setup_notification
 
   setup_var_filesize
 
-  # TODO: zostawić tylko listę w wersji x.51 lub nowszej
-  local v videoext_array=0
-
-  if v="$(declare -p videoext 2>/dev/null)"; then
-    case "$v" in
-      "declare -a videoext="*|"typeset -a videoext="*) videoext_array=1;;
-    esac
-  fi
-
-  test "$videoext_array" = "1" \
-    || warn "Zaktualizuj opcję videoext do nowszej wersji..."
+  # Sprawdzanie poprawności hasła o ile wł. logowanie
+  validate_auth
 
   msg "Generowanie listy plików"
 
@@ -321,6 +351,8 @@ ARGV__getopts() {
         ARGV__bool "$opt"; colors="$bool_ret";;
       -X=*|--subext-autodetect=*|--subext-autodetect|--no-subext-autodetect)
         ARGV__bool "$opt"; subext_autodetect="$bool_ret";;
+      -N=*|--notifications=*|--notifications|--no-notifications)
+        ARGV__bool "$opt"; notifications="$bool_ret";;
 #      -r=*|--subretry-restore=*|--subretry-restore|--no-subretry-restore)
 #        ARGV__bool "$opt"; subretry_restore="$bool_ret";;
       -F=*|--subfmt-conv=*) subfmt_conv="${opt#*=}" ;;
@@ -334,7 +366,7 @@ ARGV__getopts() {
       -n=*|--nick=*) auth_nick="${opt#*=}";;
       -p=*|--pass=*) auth_pass="${opt#*=}";;
       -L=*|--login=*) auth_login="${opt#*=}";;
-      --version) echo "$NB_VERSION"; return 1;;
+      --version) printf -- "%s\n" "$NB_VERSION"; return 1;;
       --debug=*|--config=*) true;;
       --) break ;;
       -*) ARGV__bad_arg l "$opt" || return 1;;
@@ -361,7 +393,7 @@ ARGV__bool() {
   bool_ret=nie
 
   if [ "$left" = "$right" ]; then
-    ! [[ "$left" =~ '^--no-' ]] && bool_ret=tak
+    ! [[ "$left" = "--no-"* ]] && bool_ret=tak
   else
     enabled "$right" && bool_ret=tak 
   fi
@@ -369,7 +401,7 @@ ARGV__bool() {
 }
 
 ARGV__parse_depth() {
-  test -z "${1//[0-9-]/}" || return 0
+  [[ "$1" = +([0-9-]) ]] || return 0
 
   unset NB_FIND_DEPTH
 
@@ -405,37 +437,34 @@ test_filesize() {
 }
 
 test_videoext() {
-  local file="$1"
+  local file="${1,,}" i
 
-  # TODO: zostawić tylko listę w wersji x.51 lub nowszej
-  if [ "$videoext_array" = "0" ]; then
-    local ext="${file##*.}"
-
-    [[ "${ext,,}" =~ $videoext ]] && return 0
-  else
-    local i n
-
-    for i in "${videoext[@]}"; do
-      n="${file:${#file}-${#i}}"
-      test "$n" = "$i" && return 0
-    done
-  fi
+  for i in "${videoext[@]}"; do
+    case "${file}" in
+      *"$i") return 0
+    esac
+  done
 
   return 1
 }
 
 generate_files() {
-  local i realpath
+  local i path
 
   # Pliki/katalogi..
   for i in "${@}"; do
     test -n "$i" || continue
-    read realpath < <(realpath -- "$i")
 
-    if [ -d "$realpath" ]; then
-      generate_files__dir_recursively "$realpath"
+    if [ -n "$BIN_realpath" ]; then
+      read path < <(realpath -- "$i")
     else
-      generate_files__file "$realpath"
+      path="$i"
+    fi
+
+    if [ -d "$path" ]; then
+      generate_files__dir_recursively "$path"
+    else
+      generate_files__file "$path"
     fi
   done
 
@@ -457,7 +486,7 @@ generate_files__dir_recursively() {
 }
 
 generate_files__file() {
-  test -f "$1" -a -r "$1" || return 1
+  test -f "$1" && test -r "$1" || return 1
 
   local NB_generate_files_FOR="${NB_generate_files_FOR:-file}"
 
@@ -487,9 +516,15 @@ generate_files__file() {
 early() {
   test -t 1 || colors=0
 
+  early__check_bash_ver || return 1
   early__debug "$@"
 }
-
+early__check_bash_ver() {
+ if [ "${BASH_VERSINFO[0]}" -lt "4" ] || [ "${BASH_VERSINFO[1]}" -lt "1" ]; then
+   error "Zaktualizuj swój bash do wersji 4.1 lub nowszej..."
+   return 1
+ fi
+}
 early__debug() {
   local opt
 
@@ -523,9 +558,7 @@ early__debug() {
 #-------------------------------------------------------------------------------
 ##### "enable" checker #####
 napi_msg__enabled__gui() {
-  if [ "$DISPLAY" = "" ]; then
-    return 1
-  fi
+  test -n "$NB_notify_tool" || return 1
 
   if [ "$1" = "raport" ]; then
     enabled "$raport_gui_enabled" && return 0 || return 1
@@ -551,91 +584,184 @@ napi_msg__enabled__cli() {
 
 ##### main fields filler (tag replace) #####
 fill_fields() {
-  local ini="$1"
-  local fmt="$2"
-  local msg="$3"
-  shift 3
+  local NB__type="${1//[^[:alnum]]/_}"
+  local NB__fmt="${2//[^[:alnum]]/_}"
+  local NB__msg="$3"
+  local file_id="$4"
+  local error_id="$5"
+  shift 5
 
-  local -a NB_FIELDS_SUB
+  if [ "$NB__fmt" = "gui" ]; then
+    NB__fmt="$NB_notify_fmt"
+  fi
+
   fill_fields_ret=
 
-  local -i c=0
+  local -a local_array
+  local -i NB__begin=0 NB__end=0
+  local NB__index return_str
 
-  for ((c=0; $c < ${#msg}; c++)); do
-    ch="${msg:c:1}"
-    if [ "$ch" = "%" ]; then
-      let c++
-      fill_fields__ini_$ini "$fmt" "${msg:c:1}" "$@"
-    else
-      fill_fields_ret+="$ch"
-    fi
+  until [ "$NB__end" -ge "${#NB__msg}" ]; do
+    NB__begin=$NB__end
+    NB__index="${NB__msg:NB__begin}"
+
+    case "${NB__index:0:2}" in
+      '%{')
+        NB__begin+=2
+        NB__index="${NB__msg:NB__begin}"
+        NB__index="${NB__index%%'}'*}"
+        NB__end=${#NB__index}
+
+        fill_fields__tag "${NB__msg:NB__begin:NB__end}" \
+          && fill_fields_ret+="$return_str"
+
+        NB__end+=$NB__begin
+        NB__end+=1
+        ;;
+      '%'*)
+        NB__begin+=1
+        NB__end+=2
+        fill_fields__tag "${NB__msg:NB__begin:1}" \
+          && fill_fields_ret+="$return_str"
+        ;;
+      *)
+        NB__index="${NB__index%%'%'*}"
+        NB__end=${#NB__index}
+
+        fill_fields__esc "${NB__msg:NB__begin:NB__end}" \
+          && fill_fields_ret+="$return_str" \
+          || fill_fields_ret+="${NB__msg:NB__begin:NB__end}"
+
+        NB__end+=$NB__begin
+    esac
   done
 
-  fill_fields__fmt_$fmt "R"
+  test -n "$fill_fields_ret" \
+    || return 1
+
+  fill_fields__tag "R" \
+    && fill_fields_ret+="$return_str"
+
+  return 0
 
   #RETURNVAR: $fill_fields_ret
 }
 
-# ini fields (put the information)
-fill_fields__ini_msg() {
-  case "$2" in
-    f) fill_fields_ret+="${files[$3]##*/}";;
-    d) fill_fields_ret+="$3";;
-    e) fill_fields_ret+="$4";;
-    %) fill_fields_ret+="%";;
-    *) fill_fields__fmt_$1 "$2"
-  esac
-}
-fill_fields__ini_raport() {
-  local -i d=0 n=0 a=0
+fill_fields__tag() {
+  return_str=
 
-  for ((a=0; $a < "${#files_stat[@]}"; a++)); do
-    test "${files_stat[$a]}" = "0" && d+=1 || n+=1
+  local -a NB__tag_list
+  IFS=":" read -a NB__tag_list <<< "$1"
+
+  local -i NB__tag_id=0
+  for ((NB__tag_id=0; $NB__tag_id < ${#NB__tag_list[@]}; NB__tag_id++)); do
+    is_function fill_fields__tag__$NB__type \
+      && fill_fields__tag__$NB__type "${NB__tag_list[$NB__tag_id]}" >&2 \
+      && return 0
   done
 
-  case "$2" in
-    d) fill_fields_ret+="$d";;
-    n) fill_fields_ret+="$n";;
-    a) fill_fields_ret+="$a";;
-    %) fill_fields_ret+="%";;
-    *) fill_fields__fmt_$1 "$2"
-  esac
+  return 1
+}
+
+fill_fields__esc() {
+  return_str=
+
+  # TODO według notyfierów - tablica assocjacyjna
+  if is_function fill_fields__esc__$NB__fmt; then
+    fill_fields__esc__$NB__fmt "$1" >&2 \
+      || return 1
+  else
+    return_str="$1"
+  fi
+
+  test -n "$return_str"
+}
+
+fill_fields__fmt() {
+  return_str=
+
+  # TODO według notyfierów - tablica assocjacyjna
+  is_function fill_fields__fmt__$NB__fmt \
+    && fill_fields__fmt__$NB__fmt "$1" >&2 \
+    || return 1
+
+  test -n "$return_str"
+}
+
+# tag fields (put the information)
+fill_fields__tag__msg() {
+  case "$1" in
+    f) fill_fields__esc "${files[$file_id]##*/}";;
+    path) fill_fields__esc "${files[$file_id]}";;
+    dir) fill_fields__esc "${files[$file_id]%/*}";;
+    d) fill_fields__esc "$file_id";;
+    e) fill_fields__esc "$error_id";;
+    *) fill_fields__fmt "$1"
+  esac || return 1
+}
+fill_fields__tag__raport() {
+  local -i dl_done=0 dl_fail=0 dl_all=0
+
+  for ((dl_all=0; $dl_all < ${#files_stat[@]}; dl_all++)); do
+    test "${files_stat[$dl_all]}" = "0" && dl_done+=1 || dl_fail+=1
+  done
+
+  case "$1" in
+    d) fill_fields__esc "$dl_done";;
+    n) fill_fields__esc "$dl_fail";;
+    a) fill_fields__esc "$dl_all";;
+    *) fill_fields__fmt "$1"
+  esac || return 1
+}
+
+# escape characters from nontag part
+fill_fields__esc__cli() {
+  return_str="${1//\\/\\\\}"
+}
+fill_fields__esc__xml() {
+  return_str="${1//&/&amp;}"
+  return_str="${return_str//\"/&quot;}"
+  return_str="${return_str//\'/&apos;}"
+  return_str="${return_str//>/&gt;}"
+  return_str="${return_str//</&lt;}"
 }
 
 # format fields (formating output)
-fill_fields__fmt_cli_esc() {
+fill_fields__fmt__cli() {
   enabled "$colors" || return
 
   case "$1" in
-    [0-7]) NB_FIELDS_SUB[0]=";3$1";;
-    b) NB_FIELDS_SUB[1]=";1";;
-    i) NB_FIELDS_SUB[2]=";3";;
-    u) NB_FIELDS_SUB[3]=";4";;
-    [8-9]) unset NB_FIELDS_SUB[0];;
-    B) unset NB_FIELDS_SUB[1];;
-    I) unset NB_FIELDS_SUB[2];;
-    U) unset NB_FIELDS_SUB[3];;
-    R) local i; for i in {0..3}; do unset NB_FIELDS_SUB[$i]; done;;
-    *) return;;
+    '%') return_str="%"; return 0;;
+    [0-7]) local_array[0]=";3$1";;
+    'b') local_array[1]=";1";;
+    'i') local_array[2]=";3";;
+    'u') local_array[3]=";4";;
+    [8-9]) unset local_array[0];;
+    'B') unset local_array[1];;
+    'I') unset local_array[2];;
+    'U') unset local_array[3];;
+    'R') local i; for i in {0..3}; do unset local_array[$i]; done;;
+    *) return 1;;
   esac
 
-  fill_fields_ret+="\e[0${NB_FIELDS_SUB[1]}${NB_FIELDS_SUB[2]}${NB_FIELDS_SUB[3]}${NB_FIELDS_SUB[0]}m"
+  return_str="\e[0${local_array[1]}${local_array[2]}${local_array[3]}${local_array[0]}m"
 }
-fill_fields__fmt_gui_xml() {
+fill_fields__fmt__xml() {
   local c
   case "$1" in
-    b|i|u)
+    '%') return_str="%";;
+    'b'|'i'|'u')
       local canset=1
-      for ((c=0; $c < ${#NB_FIELDS_SUB[0]}; c++)); do
-        test "${NB_FIELDS_SUB[0]:$c:1}" = "$1" && canset=0
+      for ((c=0; $c < ${#local_array[0]}; c++)); do
+        test "${local_array[0]:$c:1}" = "$1" && canset=0
       done
       test "$canset" = "1" || return
-      fill_fields_ret+="<$1>" && NB_FIELDS_SUB[0]+="$1"
+      return_str="<$1>" && local_array[0]+="$1"
     ;;
-    B|I|U)
+    'B'|'I'|'U')
       local stupidxml_left="" stupidxml_right="" stupidxml_tag="" canunset=0 new_GUIFMT=""
-      for ((c=0; $c < ${#NB_FIELDS_SUB[0]}; c++)); do
-        stupidxml_tag="${NB_FIELDS_SUB[0]:$c:1}"
+      for ((c=0; $c < ${#local_array[0]}; c++)); do
+        stupidxml_tag="${local_array[0]:$c:1}"
         if [ "$stupidxml_tag" = "${1,}" ]; then
           canunset=1
         else
@@ -645,21 +771,33 @@ fill_fields__fmt_gui_xml() {
       done
       test "$canunset" = "1" || return
 
-      for ((c=$[${#NB_FIELDS_SUB[0]}-1]; $c >= 0; c--)); do
-        stupidxml_left+="</${NB_FIELDS_SUB[0]:$c:1}>"
+      for ((c=$[${#local_array[0]}-1]; $c >= 0; c--)); do
+        stupidxml_left+="</${local_array[0]:$c:1}>"
       done
 
-      NB_FIELDS_SUB[0]="$new_GUIFMT"
+      local_array[0]="$new_GUIFMT"
 
-      fill_fields_ret+="$stupidxml_left$stupidxml_right"
+      return_str="$stupidxml_left$stupidxml_right"
     ;;
-    R)
-      for ((c=$[${#NB_FIELDS_SUB[0]}-1]; $c >= 0; c--)); do
-        fill_fields_ret+="</${NB_FIELDS_SUB[0]:$c:1}>"
+    'R')
+      return_str=
+      for ((c=$[${#local_array[0]}-1]; $c >= 0; c--)); do
+        return_str+="</${local_array[0]:$c:1}>"
+        echo "--- ${local_array[0]:$c:1}"
       done
-      unset NB_FIELDS_SUB[0]
+      unset local_array[0]
     ;;
-    *) return;;
+    'file-uri')
+      local file="${files[$file_id]}"
+      fill_fields__esc "${file##*/}"
+
+      local uri_encode_ret
+      test "${file:0:1}" = "/" || file="$PWD/$file"
+      uri_encode "$file"
+
+      return_str='<a href="file://'"$uri_encode_ret"'">'"$return_str"'</a>'
+    ;;
+    *) return 1;;
   esac
 }
 
@@ -692,46 +830,62 @@ napi_msg() {
 }
 napi_msg_gui() {
   napi_msg__enabled__gui "$3" || return 0
-  fill_fields "msg" "$gui_msg_fmt" "$@" \
-    && gui_msg "$3" "$fill_fields_ret" &
+  local fill_fields_ret
+
+  if fill_fields "msg" "gui" "$@"; then
+    gui_msg "$3" "$fill_fields_ret" &
+  else
+    return 1
+  fi
 }
 napi_msg_cli() {
   napi_msg__enabled__cli "$3" || return 0
-  if [ "$3" = "0" ]; then
-    fill_fields "msg" "$cli_msg_fmt" "$@" \
-      && printfo STDOUT "$fill_fields_ret\n"
+  local fill_fields_ret
+
+  if fill_fields "msg" "cli" "$@"; then
+    if [ "$3" = "0" ]; then
+      printfo STDOUT "${fill_fields_ret//%/%%}\n" || return 1
+    else
+      printfo STDERR "${fill_fields_ret//%/%%}\n" || return 1
+    fi
   else
-    fill_fields "msg" "$cli_msg_fmt" "$@" \
-      && printfo STDERR "$fill_fields_ret\n"
+    return 1
   fi
 }
 napi_raport() {
-  local msg
-
-  if ! msg="$(custom_raport)"; then
-    msg="${msg_raport:-"Łącznie pobrano %i/%a napisów..."}"
-  fi
+  local msg="${msg_raport:-"Łącznie pobrano %i/%a napisów..."}"
 
   napi_raport_cli "$msg"
   napi_raport_gui "$msg"
 }
 napi_raport_gui() {
   napi_msg__enabled__gui "raport" || return 0
-  fill_fields "raport" "$gui_raport_fmt" "$@" \
-    && gui_msg "raport" "$fill_fields_ret" &
+  local fill_fields_ret
+
+  if fill_fields "raport" "gui" "$@"; then
+    gui_msg "raport" "$fill_fields_ret" &
+  else
+    return 1
+  fi
+
 }
 napi_raport_cli() {
   napi_msg__enabled__cli "raport" || return 0
+  local fill_fields_ret
+
   msg "Raport"
-  fill_fields "raport" "$cli_raport_fmt" "$@" \
-    && printfo STDOUT "$fill_fields_ret\n"
+  if fill_fields "raport" "cli" "$@"; then
+    printfo STDOUT "${fill_fields_ret//%/%%}\n"
+  else
+    return 1
+  fi
 }
 
 #-------------------------------------------------------------------------------
 #  Generowanie sum kontrolnych
 #-------------------------------------------------------------------------------
 get_hash__md5sum() {
-  test -n "$1" -a -f "$1" -a -r "$1" || return 1
+  test -n "$1" && test -f "$1" && test -r "$1" || return 1
 
   read md5sum < <(md5sum --binary < <(dd bs=10485760 count=1 if="$1" 2> /dev/null))
   md5sum="${md5sum:0:32}"
@@ -760,9 +914,9 @@ get_hash__napisum() {
     a="${mul[p]}"
     p="${idx[p]}"
 
-    printf -v i "%d" "0x${md5sum:p:1}"; i="$[n + i]"
-    printf -v s "%d" "0x${md5sum:i:2}"
-    printf -v y "%x" "$[s*a]"
+    printf -v i -- "%d" "0x${md5sum:p:1}"; i="$[n + i]"
+    printf -v s -- "%d" "0x${md5sum:i:2}"
+    printf -v y -- "%x" "$[s*a]"
 
     napisum+="${y:${#y}-1:1}"
   done
@@ -808,17 +962,15 @@ napi_poll__fork_hash() {
     test "$md5sum" != "$napisum" \
       || get_hash "${files[$c]}"
 
-    echo "$? $c $md5sum $napisum" >&4
+    echo "$? $c $md5sum $napisum"
   done
 
-  echo bye >&4
+  echo bye
 }
 
 napi_poll__fork_download() {
   local ret=0
   local -a childARG
-
-  enabled "$auth_login" || unset napi_nick napi_pass
 
   while read -a childARG; do
     test "${childARG[0]}" = "bye" && break
@@ -826,48 +978,52 @@ napi_poll__fork_download() {
     sub_download "${childARG[@]}"
     childARG[0]=$?
 
-    echo "${childARG[@]}" >&3
-  done <&4
+    echo "${childARG[@]}"
+  done
 
-  echo bye >&3
+  echo bye
 }
 
 napi_poll() {
+  local CACHE
   read CACHE < <(mktemp -u -d -p "$NB_CACHEDIR" $$.XXXX)
-  mkdir -p "$CACHE"
+  mkdir -p "$CACHE" || return 1
   NB_USERBREAK=0
-
-  # Obsługa sygnałów / czyszczenie
-  trap 'kill ${NB_childPID[@]} &> /dev/null; rm -rf "$CACHE"' EXIT
-  trap 'NB_USERBREAK=1; kill ${NB_childPID[@]} &> /dev/null; echo bye >&3; echo -ne "\n*** Przerwane przez użytkownika ***\n"' SIGINT
 
 # Tworzenie fifo (kolejka: "pierwszy wchodzi, pierwszy wychodzi")
 # do komunikacji pomiędzy forkiem a rodzicem
   # tworzenie fifo
   mkfifo "$CACHE/hash.fifo" "$CACHE/download.fifo"
 
+  local NB_queue_hash NB_queue_download
   # otwieranie fifo fd
-  exec 4<>"$CACHE/hash.fifo" 3<>"$CACHE/download.fifo"
+  exec {NB_queue_hash}<>"$CACHE/hash.fifo" \
+       {NB_queue_download}<>"$CACHE/download.fifo"
 
-  napi_poll__fork_hash      & NB_childPID+=($!)
-  napi_poll__fork_download  & NB_childPID+=($!)
+  # Obsługa sygnałów / czyszczenie
+  trap 'kill ${NB_childPID[@]} &> /dev/null; rm -rf -- "$CACHE"' EXIT
+  trap 'NB_USERBREAK=1; kill ${NB_childPID[@]} &> /dev/null; echo bye >&$NB_queue_download; echo -ne "\n*** Przerwane przez użytkownika ***\n"' SIGINT
+
+  # subprocesy
+  napi_poll__fork_hash 1>&$NB_queue_hash     & NB_childPID+=($!)
+  napi_poll__fork_download \
+    0<&$NB_queue_hash 1>&$NB_queue_download  & NB_childPID+=($!)
 
   local ext
   local -a childARG
 
-  validate_auth
-
-  while read -a childARG; do
+  while read -u $NB_queue_download -a childARG; do
     test "${childARG[0]}" = "bye" && break
 
     if [ "${childARG[0]}" = "0" ]; then
       # Konwertowanie strony kodowej
       subcp_convert "${childARG[@]}" || napi_msg "${childARG[1]}" "$?"
 
-      subeol_convert "${childARG[@]}"
-
-      # Konwetowanie formatu napisów i/lub pobieranie rozszerzenia o ile subext ma prefix
+      # Konwertowanie formatu napisów i/lub pobieranie rozszerzenia o ile subext ma prefix
       subfmt_convert "${childARG[@]}" || napi_msg "${childARG[1]}" "$?"
+
+      # konwertowanie znaku końca linii
+      subeol_convert "${childARG[@]}"
 
       # Instalowanie napisów
       subext="$ext" sub_install "${childARG[@]}"
@@ -877,12 +1033,12 @@ napi_poll() {
     fi
 
     napi_msg "${childARG[1]}" "${childARG[0]}"
-  done <&3
+  done
 
-  trap 'NB_USERBREAK=1; echo -ne "\n*** Przerwane przez użytkownika ***\n"' SIGINT
+  # Zamykanie fifo fd
+  exec {NB_queue_hash}>&- {NB_queue_download}>&-
 
-  # zamykanie fifo fd
-  exec 3>&- 4>&-
+  trap - SIGINT
 }
 
 
@@ -906,7 +1062,7 @@ subretry_restore() {
   for i in "$CACHEDIR/subretry/"*; do
     read file < "$i"
     if ! [ -f "$file" ]; then
-      unlink "$i"
+      unlink -- "$i"
       continue
     fi
     sums="${i##*/}"
@@ -926,14 +1082,14 @@ subretry_restore() {
 downloader() {
   local dlcmd="$DLAGENT" url="$1" dlfile="$2"
 
-  if [[ $dlcmd = *%o* ]]; then
-    dlcmd=${dlcmd//\%o/\"$dlfile\"}
+  if [[ "$dlcmd" = *'%o'* ]]; then
+    dlcmd="${dlcmd//\%o/\"$dlfile\"}"
   else
     return 254
   fi
 
-  if [[ $dlcmd = *%u* ]]; then
-    dlcmd=${dlcmd//\%u/\"$url\"}
+  if [[ "$dlcmd" = *'%u'* ]]; then
+    dlcmd="${dlcmd//\%u/\"$url\"}"
   else
     dlcmd="$dlcmd \"$url\""
   fi
@@ -941,7 +1097,7 @@ downloader() {
   local ret=0
   eval "$dlcmd || ret=\$?"
   if [ "$ret" != "0" ]; then
-    test -f "$dlfile" && unlink "$dlfile"
+    test -f "$dlfile" && unlink -- "$dlfile"
     return 255
   fi
 
@@ -983,7 +1139,7 @@ sub_download() {
     if [ "$dlfile_mime" = "text/plain" ]; then
       local dlfile_source
       read dlfile_source < "$dlfile"
-      unlink "$dlfile"
+      unlink -- "$dlfile"
       case "${dlfile_source,,}" in
         *"przerwa techniczna"*) return 200;;
         npc0) return 1;;
@@ -995,11 +1151,11 @@ sub_download() {
 
   # ROZPAKOWYWANIE NAPISÓW
   "$BIN_7z" x -y -so -piBlm8NTigvru0Jr0 "$dlfile" > "$subfile" 2>/dev/null
-  test -f "$dlfile" && unlink "$dlfile"
+  test -f "$dlfile" && unlink -- "$dlfile"
 
   # PLIK JEST PUST (A NIE POWINIEN)
   if ! [ -s "$subfile" ]; then
-    unlink "$subfile"
+    unlink -- "$subfile"
     return 202
   fi
 
@@ -1007,7 +1163,6 @@ sub_download() {
 }
 
 subfmt_convert__fps__mplayer() {
-  local bin="$1" file="$2"
   fps_sub=
   local output="$("$bin" \
     -really-quiet \
@@ -1022,7 +1177,6 @@ subfmt_convert__fps__mplayer() {
 }
 
 subfmt_convert__fps__mpv() {
-  local bin="$1" file="$2"
   fps_sub=
 
   local -a args
@@ -1051,7 +1205,6 @@ subfmt_convert__fps__mpv() {
 }
 
 subfmt_convert__fps__mediainfo() {
-  local bin="$1" file="$2"
   read fps_sub < <("$bin" --Output='Video;%FrameRate%' -- "$file")
   #RETURNVAR: $fps_sub
 }
@@ -1089,15 +1242,15 @@ subfmt_convert__fps() {
   test "${#BIN_subotage__fps_f[@]}" = "0" && return 1
 
   local fid="$1" LANG=C
-  local i b f fps_sub
+  local i bin func fps_sub file="${files[$fid]}"
 
   for ((i=0; i <= ${#BIN_subotage__fps_f[@]}; i++)); do
-    b="${BIN_subotage__fps_b[i]}"
-    f="${BIN_subotage__fps_f[i]}"
+    bin="${BIN_subotage__fps_b[i]}"
+    func="${BIN_subotage__fps_f[i]}"
     # subfmt_convert__fps__* ustawiają zmianną fps
-    subfmt_convert__fps__$f "$b" "${files[$fid]}" \
+    subfmt_convert__fps__$func \
       && [ -n "$fps_sub" ] \
-      && printf -v fps_ret "%.3f" "$fps_sub" \
+      && printf -v fps_ret -- "%.3f" "$fps_sub" \
       && return 0
   done
 
@@ -1111,22 +1264,24 @@ subfmt_convert__fmt_detect() {
 
   fmt_detect_ret=
 
+  local NB_FD_FILE
+  exec {NB_FD_FILE}<"$file"
+
   # szybsze od subotage.sh o ok 10 do 300 razy... Wykrywa te same formaty.
-  while read line; do
+  while read -u $NB_FD_FILE line; do
     c+=1; test "$c" -gt "$max_lines" && break
 
     case "${line:0:1}" in
-      "[")
-        if [[ "$line" =~ ^'['[0-9]+']['[0-9]*']' ]]; then
-          fmt_detect_ret='mpl2'
-          break
-        fi
-        ;;
-      "{")
-        if [[ "$line" =~ ^'{'[0-9]+'}{'[0-9]*'}' ]]; then
-          fmt_detect_ret='microdvd'
-          break
-        fi
+      "{"|'[')
+        case "$line" in
+          '{'+([0-9])'}{'*([0-9])'}'*)
+            fmt_detect_ret='microdvd'
+            break
+            ;;
+          '['+([0-9])']['*([0-9])']'*)
+            fmt_detect_ret='mpl2'
+            break
+        esac
         ;;
       0)
         case "$line" in
@@ -1138,18 +1293,18 @@ subfmt_convert__fmt_detect() {
             fmt_detect_ret='subview'
             break
             ;;
-          00:[0-5][0-9]:[0-5][0-9]:*)
+          0?(0):[0-5][0-9]:[0-5][0-9]:*)
             fmt_detect_ret='tmplayer'
             break
             ;;
-          *)
-            if [[ "$line" =~ ^[0-9]+[[:space:]]:[[:space:]]00:[0-5][0-9]:[0-5][0-9]:[0-9]{2}[[:space:]]+00:[0-5][0-9]:[0-5][0-9]:[0-9]{2} ]]; then
-              fmt_detect_ret='fab'
-              break
-            fi
+          +([0-9])' : 00:'[0-5][0-9]:[0-5][0-9]:[0-9][0-9]+( )00:[0-5][0-9]:[0-5][0-9]:[0-9][0-9]*)
+            fmt_detect_ret='fab'
+            break
         esac
     esac
-  done < "$file"
+  done
+
+  exec {NB_FD_FILE}>&-
 
   # fallback - tak na wszelki wypadek, nigdy nic nie wiadomo...
   if [ -z "$fmt_detect_ret" ] && [ -n "$BIN_subotage" ]; then
@@ -1158,11 +1313,9 @@ subfmt_convert__fmt_detect() {
     local -a ifmt
     IFS=" " read -a ifmt < <(LANG=C "$BIN_subotage" -gi "$file" 2>&1)
 
-    if [ "${ifmt[0]}" != "not detected" ]; then
-      case "${ifmt[0]}" in
-        microdvd|mpl2|subrip|tmplayer|subviewer|fab) fmt_detect_ret="${ifmt[0]}";;
-      esac
-    fi
+    case "${ifmt[0]}" in
+      microdvd|mpl2|subrip|tmplayer|subviewer|fab) fmt_detect_ret="${ifmt[0]}";;
+    esac
   fi
 
   test -n "$fmt_detect_ret"
@@ -1182,7 +1335,7 @@ subfmt_convert() {
   local output fmt_detect_ret i fps_ret fps_opts
 
   # Detekcja (potrzebne dla obu: subext_autodetect i subfmt_conv)
-  subfmt_convert__fmt_detect "$subfile" || return 100
+  subfmt_convert__fmt_detect "$subfile" >&2 || return 100
   enabled "$subext_autodetect" && ext="${subfmt_ext[$fmt_detect_ret]}"
 
   # Zatrzymaj tutaj jeśli nie ustawiono subfmt_conv
@@ -1197,15 +1350,14 @@ subfmt_convert() {
 
   # Wczytywanie FPS dla konwersji z/do microdvd
   if [ -n "$fps_opts" ]; then
-    if ! subfmt_convert__fps "$fid"; then
+    if ! subfmt_convert__fps "$fid" >&2; then
       return 101
     fi
   fi
 
   # Czas wygasania napisu
   local lasting_time_opts
-  test -n "$subfmt_lasting_time" \
-    && test -z "${subfmt_lasting_time//[0-9]/}" \
+  [[ "$subfmt_lasting_time" = +([0-9]) ]] \
     && lasting_time_opts="--lasting-time $subfmt_lasting_time"
 
   # Przeprowadzanie konwersji i zapis stanu w subostat
@@ -1230,12 +1382,8 @@ subfmt_convert() {
   case "$subostat" in
     'Done')
       test -f "$subftmp" \
-        && cp \
-          --remove-destination \
-          --no-target-directory \
-          --dereference \
-          -- "$subftmp" "$subfile" &> /dev/null \
-        && unlink "$subftmp" \
+        && copyfile "$subftmp" "$subfile" &> /dev/null \
+        && unlink -- "$subftmp" \
         || return 101
       ;;
     "No convertion is needed"*)
@@ -1293,13 +1441,8 @@ subcp_convert() {
   if [ "$from" != "$to" ]; then
     # Tworzenie kopii zapasowa oryginału
     local subftmp="$CACHE/_${md5}_${napi}.subcp.tmp"
-    if ! cp \
-        --remove-destination \
-        --no-target-directory \
-        --dereference \
-        -- "$subfile" "$subftmp" &> /dev/null
-    then
-      test -f "$subftmp" && unlink "$subftmp"
+    if ! copyfile "$subfile" "$subftmp" &> /dev/null; then
+      test -f "$subftmp" && unlink -- "$subftmp"
       return 102
     fi
 
@@ -1307,15 +1450,11 @@ subcp_convert() {
     "$BIN_iconv" \
       -f "$from" \
       -t "$to" > "$subftmp" 2> /dev/null < "$subfile" \
-    && cp \
-      --remove-destination \
-      --no-target-directory \
-      --dereference \
-      -- "$subftmp" "$subfile" &> /dev/null
+    && copyfile "$subftmp" "$subfile" &> /dev/null
 
     # SPrzątanie
     local ret=$?
-    unlink "$subftmp"
+    unlink -- "$subftmp"
     test "$ret" = "0" || return 102
   fi
 
@@ -1323,13 +1462,12 @@ subcp_convert() {
 }
 
 subeol_convert() {
+  test -n "$subeol_conv" && test -n "$BIN_dos2unix" || return 0
+
   local md5="$3" napi="$4"
   local subfile="$CACHE/_${md5}_${napi}.sub"
 
-  case "${subeol_conv,,}" in
-    u*|l*) sed -r 's/\r?$//g'   -i "$subfile";;
-    d*|c*) sed -r 's/\r?$/\r/g' -i "$subfile";;
-  esac || true
+  "$BIN_dos2unix" --quiet "$subfile" &> /dev/null
 }
 
 sub_install() {
@@ -1342,7 +1480,7 @@ sub_install() {
   local to="$path$pref.$subext"
 
   # ILITERACJA W NAZWIE W PRZYPADKU BRAKU PRZYWOLENIA NA NADPIS
-  if [ -e "$to" -a "$suboverwrite" == "0" ]; then
+  if [ -e "$to" ] && [ "$suboverwrite" = "0" ]; then
     local -i c
     for ((c=0; $c < 100; c++)); do
       test -f "$path.$c$pref.$subext" || break
@@ -1351,14 +1489,9 @@ sub_install() {
   fi
 
   # INSTALACJA PLIKU (I GDY PLIK JEST PUSTY)
-  if ! cp \
-    --preserve=timestamps \
-    --remove-destination \
-    --no-target-directory \
-    --dereference \
-    -- "$from" "$to" &> /dev/null; then
+  if ! copyfile "$from" "$to" &> /dev/null; then
     if [ -f "$to" ]; then
-      unlink "$to"
+      unlink -- "$to"
       return 3
     else
       return 2
@@ -1382,9 +1515,9 @@ uri_encode() {
   for (( i=0 ; i<${#string} ; i++ )); do
     c="${string:$i:1}"
     case "$c" in
-      [-_.~a-zA-Z0-9]) o="${c}" ;;
+      [\&\(\)\?\!\;@#$-+=_,.:~/a-zA-Z0-9]) o="${c}" ;;
       *)
-        printf -v o '%%%02x' "'$c"
+        printf -v o -- '%%%02x' "'$c"
     esac
     uri_encode_ret+="${o}"
   done
@@ -1393,12 +1526,20 @@ uri_encode() {
 }
 
 validate_auth() {
-  enabled "$auth_login" || return 0
+  if enabled "$auth_login"; then
+    # obsługa starego sposóbu (bez uri_encode) lub
+    # funkcja została już wcześniej wykonana...
+    test -n "$napi_nick" && test -n "$napi_pass" && return 0
+  else
+    # logowanie jest wyłączone
+    unset napi_nick napi_pass
+    return 0
+  fi
 
-  local auth_status="Zły login lub hasło..."
-  local uri_encode_ret
+  local auth_status="Zły login lub hasło"
+  local uri_encode_ret auth_status_file
 
-  if [ -n "$auth_nick" -a -n "$auth_pass" ] \
+  if [ -n "$auth_nick" ] && [ -n "$auth_pass" ] \
     && uri_encode "$auth_nick" \
     && napi_nick="$uri_encode_ret" \
     && uri_encode "$auth_pass" \
@@ -1406,8 +1547,11 @@ validate_auth() {
   then
     local url="http://www.napiprojekt.pl/users_check.php?nick=$napi_nick&pswd=$napi_pass"
 
-    if downloader "$url" "$CACHE/auth_status.txt"; then
-      read auth_status < "$CACHE/auth_status.txt"
+    read auth_status_file < <(mktemp -u -p "$NB_CACHEDIR" auth_stat.$$.XXXX)
+
+    if downloader "$url" "$auth_status_file"; then
+      read auth_status < "$auth_status_file"
+      unlink -- "$auth_status_file"
       test "$auth_status" = "ok" && return 0
     fi
   fi
@@ -1415,6 +1559,28 @@ validate_auth() {
   warn "Autoryzacja nie powiodła się: $auth_status"
   unset napi_nick napi_pass
 
+  return 1
+}
+
+setup_notification() {
+  if enabled "$notifications"; then
+    test -n "$NB_notify_tool" && return 0
+  else
+    unset NB_notify_tool NB_notify_fmt
+  fi
+
+  local findbin_ret
+
+  case "$OSTYPE" in
+    linux*|bsd*|solaris*) test -n "$DISPLAY" || return 0
+  esac
+
+  for i in "${notifications_tools[@]}"; do
+    findbin "$i" \
+      && NB_notify_tool="${i//[^[:alnum:]]/_}" \
+      && NB_notify_fmt="${notifications_fmt[$i]:-"plain"}" \
+      && return 0
+  done
   return 1
 }
 
@@ -1428,14 +1594,13 @@ setup_var_sublang() { #TODO
 }
 
 setup_var_filesize() {
-  # równo 10MiB to min rozmiar pliku dla hasha...
-  [ "${filesize_ge:-"0"}" != "0" ] \
-    && [ -z "${filesize_ge//[0-9]/}" ] \
+  # równo lub więcej (równo 10MiB to min rozmiar pliku dla hasha)
+  [[ "$filesize_ge" = +([0-9]) ]] \
     && [ "$filesize_ge" -ge "10" ] \
     || filesize_ge=10
 
-  [ "${filesize_le:-"0"}" != "0" ] \
-    && [ -z "${filesize_le//[0-9]/}" ] \
+  # równo lub mniej (puste = bez limitu)
+  [[ "$filesize_le" = +([0-9]) ]] \
     && [ "$filesize_le" -lt "10" ] \
     || unset filesize_le
 }
@@ -1510,29 +1675,80 @@ setup_bin_subotage__fps() {
   fi
 }
 
+setup_bin_dos2unix() {
+  test -n "$subeol_conv"  || return 0
+  test -n "$BIN_dos2unix" && return 0
+
+  local findbin_ret
+
+  case "${subeol_conv,,}" in
+    u*|l*) findbin dos2unix;;
+    d*|c*) findbin unix2dos;;
+    *)
+      unset subeol_conv
+      warn "Nieprawidłowa wartość dla opcji subeol_conv"
+      return 1
+  esac
+
+  BIN_dos2unix="$findbin_ret"
+
+  if [ -z "$BIN_dos2unix" ]; then
+    unset BIN_dos2unix subeol_conv
+    warn "Aby móc konwertować znak końca linii, zainstaluj: dos2unix"
+    return 1
+  fi
+}
+
+setup_bin_perl() {
+  test -n "$BIN_perl" && return 0
+
+  local findbin_ret
+  if findbin perl; then
+    BIN_perl="${BIN_perl:-"$findbin_ret"}"
+    return 0
+  fi
+
+  return 1
+}
+
+setup_bin_realpath() {
+  test -z "$BIN_realpath" && enabled "$subretry_store" || return 0
+
+  local findbin_ret
+  if findbin realpath; then
+    BIN_realpath="$findbin_ret"
+  elif setup_bin_perl; then
+    BIN_realpath=realpath
+    realpath() { perl -MCwd -e 'print Cwd::abs_path shift' "$@"; }
+  else
+    #warn ", zainstaluj: realpath lub perl"
+    subretry_store=nie
+    subretry_restore=nie
+    return 1
+  fi
+  return 0
+}
+
 setup_bin_7z() {
   local findbin_ret
   if findbin 7za 7z; then
     BIN_7z="$findbin_ret"
   else
-    error "Aby móc rozpakować archiwum z napisami zainstaluj p7zip..."
+    error "Aby móc rozpakować archiwum z napisami, zainstaluj: p7zip..."
   fi
   #RETURNVAR: BIN_7z
 }
 
 findbin() {
-  local line
   findbin_ret=
+
   while [ -n "$1" ]; do
-    while read -d: line; do
-      if [ -x "$line/$1" ]; then
-        findbin_ret="$line/$1"
-        return 0
-      fi
-    done <<< "$PATH"
+    hash "$1" &> /dev/null && findbin_ret="$1" && return 0
     shift
   done
+
   return 1
+
   #RETURNVAR: $findbin_ret
 }
 
@@ -1540,7 +1756,7 @@ findbin() {
 #  Główny kod / main()
 #-------------------------------------------------------------------------------
 main() {
-  early "$@"
+  early "$@" || return 1
   ARGV "$@" || return 1
   napi_poll
   napi_raport
