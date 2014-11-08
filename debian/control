@@ -3,7 +3,7 @@ Section: net
 Priority: optional
 Maintainer: Mateusz Łukasik <mati75@linuxmint.pl>
 Build-Depends: debhelper (>= 9)
-Standards-Version: 3.9.5
+Standards-Version: 3.9.6
 Homepage: http://3ed.github.io/napi-bash/
 Vcs-Browser: https://github.com/mati75/napi-bash.git
 Vcs-Git: git://github.com/mati75/napi-bash.git
