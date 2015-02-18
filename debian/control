@@ -2,7 +2,7 @@ Source: napi-bash
 Section: net
 Priority: optional
 Maintainer: Mateusz Łukasik <mati75@linuxmint.pl>
-Build-Depends: debhelper (>= 9)
+Build-Depends: debhelper (>= 9), dh-autoreconf, p7zip-full
 Standards-Version: 3.9.6
 Homepage: http://3ed.github.io/napi-bash/
 Vcs-Browser: https://github.com/mati75/napi-bash.git
@@ -10,7 +10,7 @@ Vcs-Git: git://github.com/mati75/napi-bash.git
 
 Package: napi-bash
 Architecture: all
-Depends: ${misc:Depends}, p7zip | p7zip-full, curl
+Depends: ${misc:Depends}, p7zip-full, curl
 Recommends: libnotify-bin
 Description: Light and fast Polish subtitle downloader from the napi-project
  Napi-bash is bash fork napi.py and expanded with many new features, 

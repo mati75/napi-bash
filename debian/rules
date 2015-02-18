@@ -2,10 +2,7 @@
 export PREFIX=/usr
 
 %:
-	dh  $@
+	dh $@ --with autoreconf
 
 override_dh_install:
 	dh_install
-
-override_dh_builddeb:
-	dh_builddeb -- -Zxz
