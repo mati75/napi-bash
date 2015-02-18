@@ -10,7 +10,7 @@ Vcs-Git: git://github.com/mati75/napi-bash.git
 
 Package: napi-bash
 Architecture: all
-Depends: ${misc:Depends}, bash (>= 3), p7zip, curl
+Depends: ${misc:Depends}, p7zip | p7zip-full, curl
 Recommends: libnotify-bin
 Description: Light and fast Polish subtitle downloader from the napi-project
  Napi-bash is bash fork napi.py and expanded with many new features, 
