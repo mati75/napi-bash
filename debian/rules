@@ -6,3 +6,6 @@ export PREFIX=/usr
 
 override_dh_install:
 	dh_install
+
+override_dh_installchangelogs:
+	dh_installchangelogs -k debian/upstream.changelog-polish

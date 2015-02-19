@@ -1,0 +1,160 @@
+# 1.0.0 (2014-09-02)
+- Zmiana numeracji wersji: 0.xy.z -> x.y.z (zaczynając od 1.0.0)
+- Notyfikacje, obsługa: growl, growlforwindows i terminal-notifier
+- Zamiana sed na dos2unix (lepsza przenośność)
+- opcje: `notifications_*`
+- systemu powiadamiania i podstawiania dla tagów - przebudowany
+- optymalizacje
+
+# 0.50.3 (2014-07-09)
+- poprawki
+- optymalizacje
+
+# 0.50.2 (2014-07-08)
+- poprawka dla błędu: [github#1](https://github.com/3ed/napi-bash/issues/1)
+- poprawka dla ffmpeg
+
+# 0.50.1 (2014-06-28)
+- poprawki
+- literówki
+- aktualizacja dokumentacji
+- dodanie kompatybilności z mpv w wersji **0.4**.x
+
+> - **Uwaga** | Aby ustawić **kompatybilność z poprzednią wersją mpv**
+>   - Przy instalacji: do `make install` dodaj `MPV_VERSION=0.3`
+>   - Poprzez plik konfiguracyjny: dodaj `fps_detect_mpv_version=0.3`
+
+# 0.50.0 (2014-06-24)
+- aktualizacja manuali
+- poprawki
+
+# 0.50.rc1 (2014-06-20)
+Główne cele 0.50.x: optymalizacja, stabilność, ku 1.x
+- mozliwość source-owania (niezalecane aż do momentu, gdy `make install` zacznie instalować `man(3)`)
+- możliwość określenia rozmiaru od/do dla plików filmowych (opcje: `--le`, `--ge`)
+- autoryzaja hasłem do napiprojektu (opcje: `auth_nick`, `auth_pass`, `auth_login`, `--login`)
+- nowy format `videoext`
+- nowa opcja `videoext_match` określa kiedy filtrować, a kiedy dodać tak jak jest
+- częściowe przywrócenie `ARGV__bad_args()` które jakimś cudem kiedyś zostało wyłączone
+- w kodzie: `cat` zastąpione przez `cp`
+- w konfiguracji: `subfmt_supported` zastąpione przez `subfmt_ext`
+- optymalizacja:
+  - usunięcie dużej ilości subshell-i (mocne przyśpieszenie)
+  - dla subext_autodetect: zastąpienie subotage własnym detektorem (mocne przyśpieszenie)
+- poprawki
+- inne
+
+# 0.43.rc2 (2014-05-29)
+- wykrywanie fps wpierw z pliku z filmem (czasami w napisach jest podany zły fps)
+
+# 0.43.rc1 (2014-05-27)
+- dopełnienia dla bash i zsh
+- nowa opcja: `subext_prefix`, `--config`
+- uruchamianie opcji `--debug` wcześniej, tak by zbierać więcej informacji
+- opcja `--debug` nie nadpisuje pliku chyba że ten ma rozszerzenie `.nb_debug`
+
+# 0.42.rc1 (2014-05-22)
+- nowa opcja: `subfmt_lasting_time`
+- dodanie wykrywania fps z pliku z filmem
+
+# 0.41.rc1 (2014-05-15)
+- nowa opcja: `subeol_conv`
+- przekierowanie np: `napi-bash | cat` tworzy niesformatowany output (można zmienić opcją `-c`)
+- poprawki
+
+# 0.40.rc2 (2014-05-13)
+- poprawki
+
+# 0.40.rc1 (2014-05-12)
+Główny cel 0.40.x: rozbudowanie, przebudowanie
+- nowe opcje: `subfmt_conv`, `subext_autodetect`, `--colors`, `--depth`, `--debug`
+- lepsza obsługa typu boolean
+- spora część kodu przeprojektowana
+- poprawki
+
+# 0.32.0 (2014-04-29)
+- Pliki tymczasowe w `XDG_CACHE_HOME` zamiast `/tmp`.
+- Reorganizacja plików tymczasowych, bardziej elastyczne
+- `7za` jest przed `7z` podczas wyszukiwania
+- nowa opcja `gui_int_warn`
+- poprawiona długa linia w man
+- funkcje `warn` i `error` piszą też przez `gui_msg`
+- tryb debug
+- inne...
+
+> Migracja hostingu (2014-04-29), poprzedni: [google-code](https://code.google.com/p/napi-bash/)
+
+# 0.31.1 (2013-09-23)
+- naprawiono [google#3](http://code.google.com/p/napi-bash/issues/detail?id=3)
+
+# 0.31 (2013-06-16)
+- duże litery w rozszerzeniach plików filmowych od teraz są traktowane jak małe
+- zoptymalizowane konwertowanie stron kodowych
+- poprawiona auto-detekcja stron kodowych
+- konfiguracja: zaznaczenie opcji `subcode_*` jako przestarzałe
+- konfiguracja: dodanie opcji `subcp_conv`
+- dodanie możliwości wyłączania kolorów na terminalu jedną opcją
+- podzielenie manuala na sekcje
+- zaktualizowanie manuala
+- przebudowanie skryptów instalacyjnych
+- dodanie do źródeł pliku `INSTALL`
+- inne...
+
+# 0.30.1 (2013-03-27)
+- Naprawiono sprawdzanie zmiennej `DISPLAY`
+- Wzbogacono "interpretator argumentów" i dodano `--`
+- Kilka mniej istotnych zmian
+
+# 0.30.0rc4 (2012-12-01)
+- Naprawiono błąd [google#1](http://code.google.com/p/napi-bash/issues/detail?id=1)
+- Opcja `-m` została zastąpiona manualem systemowym
+
+> Migracja hostingu (2012-11-13), poprzedni: http://csk.pl/~kas/?n=Skrypty.Gnapi-bash (*przekierowanie*)
+
+# 0.30.0rc3 (2012-11-12)
+- **Poprawiono:** argument `-h` (opcja pomocy) działa tak jak `--help`
+- **Zamieniono:** argument `-s` i `-o` wymagają znaku równości, np. `-s=1` (stary format będzie usunięty w przyszłości)
+- **Dodano:** dwie opcje `subcode_cp1250`/`subcode_utf8` do automatycznego konwertowania czcionek przy ściąganiu pliku
+- **Dodano:** rozszerzenie `rmvb` do filtru `videoext`..
+- Drobne poprawki
+
+# 0.30.0rc2 (2012-04-13)
+- Przede wszystkim **w 90% skrypt został przepisany od nowa..** (używa elementów wbudowanych w shell, znacząco przyśpieszone operacje..)
+- Obsługa szybkiej rekurencji
+- Możliwość pomijania pobierania gdy "napis" już wcześniej został pobrany
+- Równoległe generowanie sum i pobieranie napisów (znacząco przyśpieszone pobieranie)
+- Bardziej zaawansowane przetwarzanie argumentów polecenia
+- Obsługa raportów (podsumowań)
+- Plik konfiguracyjny
+- Tagi w opisach (pobrane, błąd, raport) 
+- Od teraz domyślnie napi-bash wyświetla notyfikację dla wszystkich plików jednorazowo, a nie dla każdego pliku z osobna. Mogło być uciążliwe dla użytkowników nowego Gnome. Można przywrócić w pliku konfiguracyjnym..
+- i inne jak np:
+  - zmiana rozszerzenia napisów na sub poprzez plik konfiguracyjny (dla odtwarzacz totem)..
+  - możliwość zmienienia programu pobierającego napisy DLAGENT (np. z curl na wget)
+  - itp..
+
+# 0.20.1 (2009-11-11)
+- **Poprawiono:** Output składa się z kilku zmiennych tekstowych, zamiast wyświetlać zawartość zmiennej jak np: `Uwaga: `, `Błąd: `, wyświetlany był numer, po czym dalsza część komunikatu już w sposób czytelny
+
+# 0.20 (2009-08-14)
+- **Dodano:** opcję `-g` - uruchomiony jako "skrypt nautilusa" nie potrzebuje tej opcji (specjalna zmienna podmieniana przezeń).
+- **Dodano:** opcję `-C` - changelog, ostatnie 5 wersji
+- **Dodano:** Możliwe jest pobieranie napisów do kilku filmów jednocześnie
+- **Dodano:** Możliwe jest rozszerzanie programu o inne GUI, np. dla KDE, mimo to na razie jest tylko GTK (notify-send).
+- **Zmieniono:** Nazwę programu z Gnapi-bash do Napi-bash. ^^
+- **Zmieniono:** Od teraz zenity jest jeszcze bardziej opcjonalny
+- **Zmieniono:** Komunikaty pokazują nazwy plików
+
+# 0.18 (2009-05-04)
+- **Dodano:** cli `-c` - opcja pozwala używać gnapi poza Xorgiem
+- **Dodano:** zabezpieczenie przez nadpisaniem pliku z napisami
+- **Zmieniono:** notyfikacja teraz jest realizowana przez notify-send
+- **Zmieniono:** python od teraz jest zbędny przy tworzeniu napi-hashu
+- **Uwaga:** w razie chęci kręcenia przy opcjach `dd` w funkcji `get_napi_url`, pamiętaj by łączna suma bajtów wynosiła 10485760
+
+# 0.17.99.2 (20070121)
+- **Naprawiony błąd:** brakujące cudzysłowie - błędna interpretacja spacji w ścieżce do pliku.
+- **Poprawki kosmetyczne:** komunikaty są teraz wyraźniejsze i bardziej zrozumiałe, itp.
+
+# 0.17.99.1 (2007-01-19)
+- Pierwsza wersja
