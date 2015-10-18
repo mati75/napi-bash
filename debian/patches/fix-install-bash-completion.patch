@@ -1,0 +1,11 @@
+Description: Fix install path for bash-completion
+Author: Mateusz Łukasik <mati75@linuxmint.pl>
+
+--- a/completion/Makefile.am
++++ b/completion/Makefile.am
+@@ -1,4 +1,4 @@
+-bashcompdir = $(datarootdir)/bash-completion/completions
++bashcompdir = /etc/bash-completion/completions
+ bashcomp_DATA = bash/napi-bash
+ 
+ zshcompdir = $(datarootdir)/zsh/site-functions/
