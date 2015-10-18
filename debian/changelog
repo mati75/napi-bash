@@ -1,4 +1,4 @@
-napi-bash (1.0.0+git20141017-1) UNRELEASED; urgency=low
+napi-bash (1.1~rc1-1) UNRELEASED; urgency=low
 
   * Initial release. (Closes: #729473)
 
