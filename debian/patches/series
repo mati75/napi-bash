@@ -1,1 +1,2 @@
 fix-install-bash-completion.patch
+disable-install-man-5.patch

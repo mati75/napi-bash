@@ -4,5 +4,9 @@ export PREFIX=/usr
 %:
 	dh $@ --with autoreconf
 
+override_dh_install:
+	chmod +x tmp/napi-bash/etc/bash-completion/completions/napi-bash
+	dh_install
+
 override_dh_installchangelogs:
 	dh_installchangelogs -k debian/changelog.upstream-polish

@@ -1,0 +1,8 @@
+Description: Disable install man 5, exactly no needed
+Author: Mateusz Łukasik <mati75@linuxmint.pl>
+
+--- a/man/Makefile.am
++++ b/man/Makefile.am
+@@ -1 +1 @@
+-man_MANS = napi-bash.1 napi-bash.5
++man_MANS = napi-bash.1
