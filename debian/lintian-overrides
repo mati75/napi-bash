@@ -1,0 +1,2 @@
+#It is false-positives because bash script using "extglob".
+shell-script-fails-syntax-check usr/bin/napi-bash
