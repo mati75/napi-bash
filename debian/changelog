@@ -1,5 +1,5 @@
-napi-bash (1.1~rc1-1) UNRELEASED; urgency=low
+napi-bash (1.1.0-1) unstable; urgency=low
 
   * Initial release. (Closes: #729473)
 
- -- Mateusz Łukasik <mati75@linuxmint.pl>  Sat, 25 Jan 2014 20:43:22 +0100
+ -- Mateusz Łukasik <mati75@linuxmint.pl>  Sat, 23 Jan 2016 21:10:03 +0100
