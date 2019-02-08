@@ -2,9 +2,9 @@ Source: napi-bash
 Section: net
 Priority: optional
 Maintainer: Mateusz Łukasik <mati75@linuxmint.pl>
-Build-Depends: debhelper (>= 10), p7zip-full
-Standards-Version: 4.0.1
-Homepage: http://3ed.github.io/napi-bash/
+Build-Depends: debhelper-compat (= 12), p7zip-full
+Standards-Version: 4.3.0
+Homepage: https://3ed.github.io/napi-bash/
 Vcs-Browser: https://github.com/mati75/napi-bash.git
 Vcs-Git: https://github.com/mati75/napi-bash.git
 
